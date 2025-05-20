@@ -46,13 +46,66 @@ const GameCanvas: React.FC = () => {
     return healthBar;
   };
 
-  // Update health bar
-  const updateHealthBar = (tank: Tank) => {
-    const healthPercentage = tank.health / tank.maxHealth;
-    tank.healthBar.clear();
-    tank.healthBar.beginFill(0x00FF00);
-    tank.healthBar.drawRect(-20, -30, 40 * healthPercentage, 5);
-    tank.healthBar.endFill();
+  // Create pulsing effect
+  const createPulseEffect = (x: number, y: number) => {
+    const pulse = new PIXI.Graphics();
+    pulse.beginFill(0x00FF00, 0.5);
+    pulse.drawCircle(0, 0, 5);
+    pulse.endFill();
+    pulse.x = x;
+    pulse.y = y;
+    
+    if (appRef.current) {
+      appRef.current.stage.addChild(pulse);
+      
+      // Animate pulse
+      let scale = 1;
+      const animatePulse = () => {
+        scale += 0.1;
+        pulse.scale.set(scale);
+        pulse.alpha = 1 - scale * 0.2;
+        
+        if (scale < 5) {
+          requestAnimationFrame(animatePulse);
+        } else {
+          if (appRef.current) {
+            appRef.current.stage.removeChild(pulse);
+          }
+        }
+      };
+      
+      animatePulse();
+    }
+  };
+
+  // Update health bar with animation
+  const updateHealthBar = (tank: Tank, targetHealth?: number) => {
+    const currentHealth = tank.health;
+    const targetHealthValue = targetHealth !== undefined ? targetHealth : currentHealth;
+    const healthPercentage = targetHealthValue / tank.maxHealth;
+
+    // Create animation container
+    const animateHealthChange = () => {
+      const currentPercentage = tank.healthBar.width / 40;
+      const step = (healthPercentage - currentPercentage) * 0.1;
+
+      if (Math.abs(step) > 0.001) {
+        tank.healthBar.clear();
+        tank.healthBar.beginFill(0x00FF00);
+        tank.healthBar.drawRect(-20, -30, 40 * (currentPercentage + step), 5);
+        tank.healthBar.endFill();
+        requestAnimationFrame(animateHealthChange);
+      } else {
+        tank.healthBar.clear();
+        tank.healthBar.beginFill(0x00FF00);
+        tank.healthBar.drawRect(-20, -30, 40 * healthPercentage, 5);
+        tank.healthBar.endFill();
+      }
+    };
+
+    animateHealthChange();
+
+    // Update position
     tank.healthBar.x = tank.sprite.x;
     tank.healthBar.y = tank.sprite.y;
     tank.healthBar.rotation = tank.sprite.rotation;
@@ -79,9 +132,10 @@ const GameCanvas: React.FC = () => {
       bulletsRef.current.delete(bullet.id);
     }
 
-    // Reduce tank health
-    tank.health -= 1;
-    updateHealthBar(tank);
+    // Reduce tank health with animation
+    const newHealth = tank.health - 1;
+    updateHealthBar(tank, newHealth);
+    tank.health = newHealth;
     
     // Send health update to server
     wsService.sendHealthUpdate(tank.id, tank.health);
@@ -129,9 +183,14 @@ const GameCanvas: React.FC = () => {
   const tryRestoreHealth = (tank: Tank) => {
     const now = Date.now();
     if (tank.health < tank.maxHealth && now - tank.lastHealthRestore >= HEALTH_RESTORE_COOLDOWN) {
-      tank.health = Math.min(tank.health + HEALTH_RESTORE_AMOUNT, tank.maxHealth);
+      const newHealth = Math.min(tank.health + HEALTH_RESTORE_AMOUNT, tank.maxHealth);
+      updateHealthBar(tank, newHealth);
+      tank.health = newHealth;
       tank.lastHealthRestore = now;
-      updateHealthBar(tank);
+      
+      // Create pulse effect at health bar position
+      createPulseEffect(tank.sprite.x, tank.sprite.y - 30);
+      
       // Send health update to server
       wsService.sendHealthUpdate(tank.id, tank.health);
     }
