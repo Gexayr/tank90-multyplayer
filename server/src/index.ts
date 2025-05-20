@@ -29,6 +29,7 @@ interface Player {
   y: number;
   rotation: number;
   color: number;
+  health: number;
 }
 
 interface Bullet {
@@ -70,7 +71,8 @@ io.on('connection', (socket) => {
     x: Math.random() * 700 + 50, // Random position
     y: Math.random() * 500 + 50,
     rotation: 0,
-    color
+    color,
+    health: 100
   };
 
   // Add player to game state
@@ -92,7 +94,24 @@ io.on('connection', (socket) => {
       player.x = data.x;
       player.y = data.y;
       player.rotation = data.rotation;
-      socket.broadcast.emit('player-move', { id: socket.id, ...data });
+      socket.broadcast.emit('player-move', {
+        id: socket.id,
+        x: data.x,
+        y: data.y,
+        rotation: data.rotation
+      });
+    }
+  });
+
+  // Handle health updates
+  socket.on('health-update', (data: { id: string; health: number }) => {
+    const player = gameState.players.get(data.id);
+    if (player) {
+      player.health = data.health;
+      socket.broadcast.emit('health-update', {
+        id: data.id,
+        health: data.health
+      });
     }
   });
 

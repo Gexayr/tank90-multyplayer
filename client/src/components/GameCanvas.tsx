@@ -40,7 +40,9 @@ const GameCanvas: React.FC = () => {
     healthBar.beginFill(0x00FF00);
     healthBar.drawRect(-20, -30, 40, 5);
     healthBar.endFill();
-    tank.sprite.addChild(healthBar);
+    if (appRef.current) {
+      appRef.current.stage.addChild(healthBar);
+    }
     return healthBar;
   };
 
@@ -51,6 +53,9 @@ const GameCanvas: React.FC = () => {
     tank.healthBar.beginFill(0x00FF00);
     tank.healthBar.drawRect(-20, -30, 40 * healthPercentage, 5);
     tank.healthBar.endFill();
+    tank.healthBar.x = tank.sprite.x;
+    tank.healthBar.y = tank.sprite.y;
+    tank.healthBar.rotation = tank.sprite.rotation;
   };
 
   // Check collision between bullet and tank
@@ -77,6 +82,9 @@ const GameCanvas: React.FC = () => {
     // Reduce tank health
     tank.health -= 1;
     updateHealthBar(tank);
+    
+    // Send health update to server
+    wsService.sendHealthUpdate(tank.id, tank.health);
 
     // Create hit effect
     const hitEffect = new PIXI.Graphics();
@@ -100,6 +108,7 @@ const GameCanvas: React.FC = () => {
     if (tank.health <= 0) {
       if (appRef.current) {
         appRef.current.stage.removeChild(tank.sprite);
+        appRef.current.stage.removeChild(tank.healthBar);
         tanksRef.current.delete(tank.id);
       }
       // Add score to the player who destroyed the tank
@@ -123,6 +132,8 @@ const GameCanvas: React.FC = () => {
       tank.health = Math.min(tank.health + HEALTH_RESTORE_AMOUNT, tank.maxHealth);
       tank.lastHealthRestore = now;
       updateHealthBar(tank);
+      // Send health update to server
+      wsService.sendHealthUpdate(tank.id, tank.health);
     }
   };
 
@@ -183,6 +194,9 @@ const GameCanvas: React.FC = () => {
         score: 0,
         lastHealthRestore: Date.now()
       });
+
+      // Initial health bar update
+      updateHealthBar(tanksRef.current.get(id)!);
     };
 
     // Create bullet function
@@ -220,7 +234,10 @@ const GameCanvas: React.FC = () => {
     wsService.onPlayerLeave((playerId) => {
       const tank = tanksRef.current.get(playerId);
       if (tank) {
-        app.stage.removeChild(tank.sprite);
+        if (appRef.current) {
+          appRef.current.stage.removeChild(tank.sprite);
+          appRef.current.stage.removeChild(tank.healthBar);
+        }
         tanksRef.current.delete(playerId);
       }
     });
@@ -259,6 +276,15 @@ const GameCanvas: React.FC = () => {
       const tank = tanksRef.current.get(bullet.playerId);
       if (tank) {
         createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint, bullet.playerId);
+      }
+    });
+
+    // Add health update handler
+    wsService.onHealthUpdate((data) => {
+      const tank = tanksRef.current.get(data.id);
+      if (tank) {
+        tank.health = data.health;
+        updateHealthBar(tank);
       }
     });
 
@@ -321,6 +347,9 @@ const GameCanvas: React.FC = () => {
         // Try to restore health
         tryRestoreHealth(localTank);
 
+        // Update health bar position
+        updateHealthBar(localTank);
+
         // Send position update to server
         wsService.sendPlayerMove(
           localTank.sprite.x,
@@ -328,6 +357,13 @@ const GameCanvas: React.FC = () => {
           localTank.rotation
         );
       }
+
+      // Update other tanks' health bars
+      tanksRef.current.forEach((tank) => {
+        if (tank.id !== wsService.getSocketId()) {
+          updateHealthBar(tank);
+        }
+      });
 
       // Update bullets and check collisions
       bulletsRef.current.forEach((bullet, bulletId) => {

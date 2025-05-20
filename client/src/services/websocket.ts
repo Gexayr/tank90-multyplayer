@@ -59,6 +59,20 @@ class WebSocketService {
     }
   }
 
+  // Score update
+  sendScoreUpdate(playerId: string, score: number) {
+    if (this.socket) {
+      this.socket.emit('score-update', { playerId, score });
+    }
+  }
+
+  // Health update
+  sendHealthUpdate(tankId: string, health: number) {
+    if (this.socket) {
+      this.socket.emit('health-update', { id: tankId, health });
+    }
+  }
+
   // Event listeners
   onPlayerJoin(callback: (player: any) => void) {
     if (this.socket) {
@@ -75,6 +89,12 @@ class WebSocketService {
   onPlayerMove(callback: (data: { id: string; x: number; y: number; rotation: number }) => void) {
     if (this.socket) {
       this.socket.on('player-move', callback);
+    }
+  }
+
+  onHealthUpdate(callback: (data: { id: string; health: number }) => void) {
+    if (this.socket) {
+      this.socket.on('health-update', callback);
     }
   }
 
