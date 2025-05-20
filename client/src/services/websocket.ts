@@ -52,6 +52,13 @@ class WebSocketService {
     }
   }
 
+  // Tank destroyed
+  sendTankDestroyed(tankId: string) {
+    if (this.socket) {
+      this.socket.emit('tank-destroyed', { tankId });
+    }
+  }
+
   // Event listeners
   onPlayerJoin(callback: (player: any) => void) {
     if (this.socket) {

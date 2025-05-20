@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import WebSocketService from '../services/websocket';
 
@@ -7,12 +7,18 @@ interface Bullet {
   direction: { x: number; y: number };
   speed: number;
   id: string;
+  playerId: string;
 }
 
 interface Tank {
   sprite: PIXI.Graphics;
   rotation: number;
   id: string;
+  health: number;
+  maxHealth: number;
+  healthBar: PIXI.Graphics;
+  score: number;
+  lastHealthRestore: number;
 }
 
 const GameCanvas: React.FC = () => {
@@ -23,7 +29,102 @@ const GameCanvas: React.FC = () => {
   const keysRef = useRef<{ [key: string]: boolean }>({});
   const lastShotTimeRef = useRef<number>(0);
   const SHOT_COOLDOWN = 500; // milliseconds between shots
+  const HEALTH_RESTORE_COOLDOWN = 10000; // 10 seconds between health restores
+  const HEALTH_RESTORE_AMOUNT = 1; // Amount of health restored
   const wsService = WebSocketService.getInstance();
+  const [localScore, setLocalScore] = useState(0);
+
+  // Create health bar for tank
+  const createHealthBar = (tank: Tank) => {
+    const healthBar = new PIXI.Graphics();
+    healthBar.beginFill(0x00FF00);
+    healthBar.drawRect(-20, -30, 40, 5);
+    healthBar.endFill();
+    tank.sprite.addChild(healthBar);
+    return healthBar;
+  };
+
+  // Update health bar
+  const updateHealthBar = (tank: Tank) => {
+    const healthPercentage = tank.health / tank.maxHealth;
+    tank.healthBar.clear();
+    tank.healthBar.beginFill(0x00FF00);
+    tank.healthBar.drawRect(-20, -30, 40 * healthPercentage, 5);
+    tank.healthBar.endFill();
+  };
+
+  // Check collision between bullet and tank
+  const checkCollision = (bullet: Bullet, tank: Tank): boolean => {
+    const bulletBounds = bullet.sprite.getBounds();
+    const tankBounds = tank.sprite.getBounds();
+    
+    return (
+      bulletBounds.x < tankBounds.x + tankBounds.width &&
+      bulletBounds.x + bulletBounds.width > tankBounds.x &&
+      bulletBounds.y < tankBounds.y + tankBounds.height &&
+      bulletBounds.y + bulletBounds.height > tankBounds.y
+    );
+  };
+
+  // Handle bullet hit
+  const handleBulletHit = (bullet: Bullet, tank: Tank) => {
+    // Remove bullet
+    if (appRef.current) {
+      appRef.current.stage.removeChild(bullet.sprite);
+      bulletsRef.current.delete(bullet.id);
+    }
+
+    // Reduce tank health
+    tank.health -= 1;
+    updateHealthBar(tank);
+
+    // Create hit effect
+    const hitEffect = new PIXI.Graphics();
+    hitEffect.beginFill(0xFF0000);
+    hitEffect.drawCircle(0, 0, 10);
+    hitEffect.endFill();
+    hitEffect.x = bullet.sprite.x;
+    hitEffect.y = bullet.sprite.y;
+    if (appRef.current) {
+      appRef.current.stage.addChild(hitEffect);
+      
+      // Remove hit effect after 100ms
+      setTimeout(() => {
+        if (appRef.current) {
+          appRef.current.stage.removeChild(hitEffect);
+        }
+      }, 100);
+    }
+
+    // Check if tank is destroyed
+    if (tank.health <= 0) {
+      if (appRef.current) {
+        appRef.current.stage.removeChild(tank.sprite);
+        tanksRef.current.delete(tank.id);
+      }
+      // Add score to the player who destroyed the tank
+      const killerTank = tanksRef.current.get(bullet.playerId);
+      if (killerTank) {
+        killerTank.score += 100;
+        if (killerTank.id === wsService.getSocketId()) {
+          setLocalScore(killerTank.score);
+        }
+        wsService.sendScoreUpdate(killerTank.id, killerTank.score);
+      }
+      // Notify server about tank destruction
+      wsService.sendTankDestroyed(tank.id);
+    }
+  };
+
+  // Try to restore health
+  const tryRestoreHealth = (tank: Tank) => {
+    const now = Date.now();
+    if (tank.health < tank.maxHealth && now - tank.lastHealthRestore >= HEALTH_RESTORE_COOLDOWN) {
+      tank.health = Math.min(tank.health + HEALTH_RESTORE_AMOUNT, tank.maxHealth);
+      tank.lastHealthRestore = now;
+      updateHealthBar(tank);
+    }
+  };
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -61,15 +162,31 @@ const GameCanvas: React.FC = () => {
       tank.y = y;
       app.stage.addChild(tank);
 
+      const healthBar = createHealthBar({
+        sprite: tank,
+        rotation: 0,
+        id,
+        health: 3,
+        maxHealth: 3,
+        healthBar: new PIXI.Graphics(),
+        score: 0,
+        lastHealthRestore: Date.now()
+      });
+
       tanksRef.current.set(id, {
         sprite: tank,
         rotation: 0,
-        id
+        id,
+        health: 3,
+        maxHealth: 3,
+        healthBar,
+        score: 0,
+        lastHealthRestore: Date.now()
       });
     };
 
     // Create bullet function
-    const createBullet = (id: string, x: number, y: number, direction: { x: number; y: number }, color: number) => {
+    const createBullet = (id: string, x: number, y: number, direction: { x: number; y: number }, color: number, playerId: string) => {
       const bullet = new PIXI.Graphics();
       bullet.beginFill(color);
       bullet.drawCircle(0, 0, 4);
@@ -82,7 +199,8 @@ const GameCanvas: React.FC = () => {
         sprite: bullet,
         direction,
         speed: 10,
-        id
+        id,
+        playerId
       });
     };
 
@@ -131,7 +249,7 @@ const GameCanvas: React.FC = () => {
         if (!bulletsRef.current.has(bullet.id)) {
           const tank = tanksRef.current.get(bullet.playerId);
           if (tank) {
-            createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint);
+            createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint, bullet.playerId);
           }
         }
       });
@@ -140,7 +258,7 @@ const GameCanvas: React.FC = () => {
     wsService.onBulletCreate((bullet) => {
       const tank = tanksRef.current.get(bullet.playerId);
       if (tank) {
-        createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint);
+        createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint, bullet.playerId);
       }
     });
 
@@ -200,6 +318,9 @@ const GameCanvas: React.FC = () => {
         localTank.sprite.x = Math.max(20, Math.min(localTank.sprite.x, app.screen.width - 20));
         localTank.sprite.y = Math.max(20, Math.min(localTank.sprite.y, app.screen.height - 20));
 
+        // Try to restore health
+        tryRestoreHealth(localTank);
+
         // Send position update to server
         wsService.sendPlayerMove(
           localTank.sprite.x,
@@ -208,10 +329,18 @@ const GameCanvas: React.FC = () => {
         );
       }
 
-      // Update bullets
-      bulletsRef.current.forEach((bullet, id) => {
+      // Update bullets and check collisions
+      bulletsRef.current.forEach((bullet, bulletId) => {
         bullet.sprite.x += bullet.direction.x * bullet.speed;
         bullet.sprite.y += bullet.direction.y * bullet.speed;
+
+        // Check collisions with tanks
+        tanksRef.current.forEach((tank) => {
+          // Don't check collision with the tank that fired the bullet
+          if (tank.id !== bullet.playerId && checkCollision(bullet, tank)) {
+            handleBulletHit(bullet, tank);
+          }
+        });
 
         // Remove bullets that are out of bounds
         if (
@@ -221,7 +350,7 @@ const GameCanvas: React.FC = () => {
           bullet.sprite.y > app.screen.height
         ) {
           app.stage.removeChild(bullet.sprite);
-          bulletsRef.current.delete(id);
+          bulletsRef.current.delete(bulletId);
         }
       });
     };
@@ -240,15 +369,28 @@ const GameCanvas: React.FC = () => {
   }, []);
 
   return (
-    <div 
-      ref={canvasRef} 
-      style={{ 
-        width: '800px', 
-        height: '600px',
-        margin: '0 auto',
-        border: '2px solid #333'
-      }}
-    />
+    <div style={{ position: 'relative' }}>
+      <div 
+        ref={canvasRef} 
+        style={{ 
+          width: '800px', 
+          height: '600px',
+          margin: '0 auto',
+          border: '2px solid #333'
+        }}
+      />
+      <div style={{
+        position: 'absolute',
+        top: '10px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        color: 'white',
+        fontSize: '20px',
+        textShadow: '2px 2px 2px black'
+      }}>
+        Score: {localScore}
+      </div>
+    </div>
   );
 };
 
