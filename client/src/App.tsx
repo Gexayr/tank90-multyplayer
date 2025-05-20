@@ -1,24 +1,43 @@
-import React from 'react';
-import GameCanvas from './components/GameCanvas';
+import React, { useEffect } from 'react';
+import { GameProvider } from './context/GameContext';
+import GameBoard from './components/GameBoard';
+import GameInterface from './components/GameInterface';
+import GameControls from './components/GameControls';
+import Leaderboard from './components/Leaderboard';
+import './styles/App.css';
 
-const App: React.FC = () => {
+function App() {
+  useEffect(() => {
+    // Update document title
+    document.title = "Tank 90 Multiplayer";
+  }, []);
+
   return (
-    <div style={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
-      alignItems: 'center',
-      padding: '20px',
-      backgroundColor: '#1a1a1a',
-      minHeight: '100vh',
-      color: 'white'
-    }}>
-      <h1 style={{ marginBottom: '20px' }}>Tank 90</h1>
-      <GameCanvas />
-      <div style={{ marginTop: '20px' }}>
-        <p>Controls: Arrow keys to move, Spacebar to fire</p>
+    <GameProvider>
+      <div className="min-h-screen bg-gray-900 text-white overflow-hidden">
+        <header className="bg-gray-800 py-4 text-center shadow-lg">
+          <h1 className="text-3xl font-bold text-yellow-400">TANK 90</h1>
+          <p className="text-gray-400">Multiplayer Edition</p>
+        </header>
+        
+        <main className="container mx-auto px-4 py-6 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-6">
+          <div className="game-container">
+            <GameBoard />
+            <GameControls />
+          </div>
+          
+          <div className="game-sidebar w-full lg:w-64 flex flex-col gap-4">
+            <GameInterface />
+            <Leaderboard />
+          </div>
+        </main>
+        
+        <footer className="mt-auto py-4 text-center text-gray-500 text-sm">
+          <p>© 2025 Tank 90 Multiplayer - A modern recreation of the classic game</p>
+        </footer>
       </div>
-    </div>
+    </GameProvider>
   );
-};
+}
 
 export default App; 
