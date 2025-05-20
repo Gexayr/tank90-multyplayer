@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client';
 class WebSocketService {
   private socket: Socket | null = null;
   private static instance: WebSocketService;
+  private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
   private constructor() {}
 
@@ -14,7 +15,8 @@ class WebSocketService {
   }
 
   connect() {
-    this.socket = io('http://localhost:3000');
+    console.log('Connecting to server:', this.SERVER_URL);
+    this.socket = io(this.SERVER_URL);
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
@@ -22,6 +24,10 @@ class WebSocketService {
 
     this.socket.on('disconnect', () => {
       console.log('Disconnected from server');
+    });
+
+    this.socket.on('connect_error', (error: Error) => {
+      console.error('Connection error:', error.message);
     });
   }
 
