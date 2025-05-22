@@ -58,6 +58,13 @@
   transition: transform 0.1s ease-out;
 }
 
+/* Tank flashing animation */
+@keyframes flash {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
 /* Projectile animation */
 .projectile {
   position: absolute;

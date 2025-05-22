@@ -40,14 +40,6 @@ const GameBoard: React.FC = () => {
         />
       ))}
       
-      {/* Render tanks */}
-      {tanks.map(tank => (
-        <Tank
-          key={`tank-${tank.id}`}
-          tank={tank}
-        />
-      ))}
-      
       {/* Render projectiles */}
       {gameState.projectiles.map(projectile => (
         <Projectile
@@ -57,7 +49,15 @@ const GameBoard: React.FC = () => {
         />
       ))}
       
-      {/* Render power-ups */}
+      {/* Render tanks */}
+      {tanks.map(tank => (
+        <Tank
+          key={`tank-${tank.id}`}
+          tank={tank}
+        />
+      ))}
+      
+      {/* Render power-ups last, so they appear on top */}
       {powerUps.map(powerUp => (
         <PowerUp
           key={powerUp.id}
@@ -65,21 +65,6 @@ const GameBoard: React.FC = () => {
           position={powerUp.position}
         />
       ))}
-      
-      {/* Base/HQ */}
-      <div
-        className="absolute bg-yellow-600 border-4 border-yellow-800"
-        style={{
-          width: `${TILE_SIZE}px`,
-          height: `${TILE_SIZE}px`,
-          left: `${Math.floor(GRID_SIZE / 2) * TILE_SIZE}px`,
-          top: `${(GRID_SIZE - 2) * TILE_SIZE}px`,
-          backgroundImage: "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"%23ffd700\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2\"/></svg>')",
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'center',
-          zIndex: 5
-        }}
-      />
     </div>
   );
 };

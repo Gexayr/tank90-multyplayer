@@ -2,7 +2,6 @@ import React, { createContext, useState, useContext, useEffect, ReactNode } from
 import { generateLevel } from '../utils/levelGenerator';
 import { Tank, Direction, Player, PowerUpType } from '../types/gameTypes';
 import { INITIAL_LIVES, MAX_PLAYERS, GRID_SIZE } from '../constants/gameConfig';
-import { io, Socket } from 'socket.io-client';
 
 // Определяем типы для всех параметров функций
 type PlayerArray = Player[];
@@ -19,6 +18,7 @@ interface GameContextType {
   isGameRunning: boolean;
   isPaused: boolean;
   powerUps: PowerUpArray;
+  showPlayerInput: boolean;
   addPlayer: (playerName: string) => void;
   startGame: () => void;
   pauseGame: () => void;
@@ -26,6 +26,7 @@ interface GameContextType {
   restartGame: () => void;
   movePlayer: (playerId: number, direction: Direction) => void;
   fireProjectile: (playerId: number) => void;
+  togglePlayerInput: () => void;
 }
 
 export interface GameState {
@@ -48,6 +49,7 @@ export interface Wall {
   position: { x: number; y: number };
   type: 'brick' | 'steel' | 'water' | 'forest';
   health: number;
+  damage: number;
 }
 
 export interface PowerUp {
@@ -66,6 +68,8 @@ interface ExtendedPlayer extends Player {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
+const LEVEL_COUNT = 5; // Укажите реальное количество уровней
+
 export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [gameState, setGameState] = useState<GameState>(() => {
     const initialGrid = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
@@ -83,132 +87,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isGameRunning, setIsGameRunning] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [powerUps, setPowerUps] = useState<PowerUpArray>([]);
-  const [socket, setSocket] = useState<Socket | null>(null);
-
-  useEffect(() => {
-    const newSocket = io('http://localhost:3000', {
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      timeout: 10000,
-      autoConnect: true
-    });
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      console.log('Connected to server with ID:', newSocket.id);
-      // При подключении всегда запрашиваем актуальное состояние игры
-      newSocket.emit('request-game-state');
-    });
-
-    newSocket.on('disconnect', (reason) => {
-      console.log('Disconnected from server, reason:', reason);
-      if (reason === 'io server disconnect') {
-        // Сервер отключил нас, пробуем переподключиться
-        newSocket.connect();
-      }
-    });
-
-    newSocket.on('connect_error', (error) => {
-      console.error('Connection error:', error);
-    });
-
-    newSocket.on('reconnect', (attemptNumber) => {
-      console.log('Reconnected to server after', attemptNumber, 'attempts');
-      newSocket.emit('request-game-state');
-    });
-
-    newSocket.on('reconnect_error', (error) => {
-      console.error('Reconnection error:', error);
-    });
-
-    newSocket.on('reconnect_failed', () => {
-      console.error('Failed to reconnect to server');
-    });
-
-    newSocket.on('game-state', (data: { players: Player[]; tanks: Tank[] }) => {
-      console.log('Received game state:', data);
-      if (data.players) {
-        setPlayers(data.players);
-      }
-      if (data.tanks) {
-        setTanks(data.tanks);
-      }
-    });
-
-    newSocket.on('player-join', (data: { player: ExtendedPlayer; tank: Tank }) => {
-      console.log('Player joined:', data);
-      if (!data || !data.player) return;
-      
-      setPlayers(prev => {
-        if (!prev) return [data.player];
-        if (prev.some(p => p.id === data.player.id)) {
-          return prev;
-        }
-        return [...prev, data.player];
-      });
-
-      if (data.tank) {
-        setTanks(prev => {
-          if (!prev) return [data.tank];
-          if (prev.some(t => t.id === data.tank.id)) {
-            return prev;
-          }
-          return [...prev, data.tank];
-        });
-      }
-    });
-
-    newSocket.on('player-move', (data: { id: number; x: number; y: number; rotation: number }) => {
-      console.log('Player moved:', data);
-      if (!data) return;
-      
-      setTanks(prev => {
-        if (!prev) return [];
-        return prev.map(tank => 
-          tank.id === data.id
-            ? { ...tank, position: { x: data.x, y: data.y }, direction: getDirectionFromRotation(data.rotation) }
-            : tank
-        );
-      });
-    });
-
-    newSocket.on('health-update', (data: { id: number; health: number }) => {
-      setTanks((prev: Tank[]) =>
-        prev.map((tank: Tank) =>
-          tank.id === data.id ? { ...tank, health: data.health } : tank
-        )
-      );
-    });
-
-    newSocket.on('bullet-create', (bullet: Projectile) => {
-      setGameState((prev: GameState) => ({
-        ...prev,
-        projectiles: [...prev.projectiles, bullet],
-      }));
-    });
-
-    newSocket.on('bullet-remove', (bulletId: string) => {
-      setGameState((prev: GameState) => ({
-        ...prev,
-        projectiles: prev.projectiles.filter((p: Projectile) => p.id !== bulletId),
-      }));
-    });
-
-    newSocket.on('player-leave', (playerId: number) => {
-      console.log('Player left:', playerId);
-      if (!playerId) return;
-      
-      setPlayers(prev => prev ? prev.filter(p => p.id !== playerId) : []);
-      setTanks(prev => prev ? prev.filter(t => t.id !== playerId) : []);
-    });
-
-    return () => {
-      if (newSocket) {
-        newSocket.disconnect();
-      }
-    };
-  }, []);
+  const [showPlayerInput, setShowPlayerInput] = useState<boolean>(true);
 
   useEffect(() => {
     if (isGameRunning) {
@@ -276,7 +155,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             id: `wall-${x}-${y}`,
             position: { x, y },
             type: getWallType(cell),
-            health: cell === 2 ? 2 : 1
+            health: cell === 2 ? 2 : 2,
+            damage: 0
           });
         }
       });
@@ -310,32 +190,48 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     for (let i = 0; i < 3; i++) {
       let position;
-      do {
-        position = {
-          x: Math.floor(Math.random() * (GRID_SIZE - 2)) + 1,
-          y: Math.floor(Math.random() * (GRID_SIZE - 2)) + 1
-        };
-      } while (isPositionOccupied(position));
+      let attempts = 0;
+      const maxAttempts = 10;
 
-      newPowerUps.push({
-        id: `powerup-${Date.now()}-${i}`,
-        position,
-        type: types[Math.floor(Math.random() * types.length)],
-        duration: 10000
-      });
+      do {
+        // Генерируем целые координаты для бонуса
+        position = {
+          x: Math.floor(Math.random() * (GRID_SIZE - 4)) + 2,
+          y: Math.floor(Math.random() * (GRID_SIZE - 4)) + 2
+        };
+        attempts++;
+      } while (isPositionOccupied(position) && attempts < maxAttempts);
+
+      if (attempts < maxAttempts) {
+        newPowerUps.push({
+          id: `powerup-${Date.now()}-${i}`,
+          position,
+          type: types[Math.floor(Math.random() * types.length)],
+          duration: 10000
+        });
+      }
     }
 
+    console.log('Generated powerups:', newPowerUps); // Добавляем лог
     setPowerUps(newPowerUps);
   };
 
   const isPositionOccupied = (position: { x: number; y: number }) => {
     if (!gameState?.walls || !tanks) return false;
     
-    return gameState.walls.some((wall: Wall) => 
-      wall.position.x === position.x && wall.position.y === position.y
-    ) || tanks.some((tank: Tank) =>
-      Math.round(tank.position.x) === position.x && Math.round(tank.position.y) === position.y
-    );
+    // Проверяем столкновение со стенами
+    const wallCollision = gameState.walls.some((wall: Wall) => {
+      return wall.position.x === position.x && wall.position.y === position.y;
+    });
+
+    // Проверяем столкновение с танками
+    const tankCollision = tanks.some((tank: Tank) => {
+      const tankX = Math.floor(tank.position.x);
+      const tankY = Math.floor(tank.position.y);
+      return tankX === position.x && tankY === position.y;
+    });
+
+    return wallCollision || tankCollision;
   };
 
   const updateGameState = () => {
@@ -360,6 +256,69 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         return { ...projectile, position: newPosition };
+      }).filter(projectile => {
+        // Проверяем столкновение со стенами
+        const wallCollision = prev.walls.some(wall => {
+          if (wall.type === 'forest') return false; // Лес не препятствие
+          const dx = Math.abs(wall.position.x - projectile.position.x);
+          const dy = Math.abs(wall.position.y - projectile.position.y);
+          
+          if (dx < 0.3 && dy < 0.3) {
+            // Если стена разрушаемая (кирпичная)
+            if (wall.type === 'brick') {
+              // Увеличиваем счетчик урона
+              wall.damage += projectile.damage;
+              
+              // Если полученный урон достиг половины здоровья, меняем внешний вид
+              if (wall.damage >= wall.health / 2) {
+                wall.health = 1; // Уменьшаем здоровье для визуального эффекта
+              }
+              
+              // Если полученный урон достиг полного здоровья, удаляем стену
+              if (wall.damage >= wall.health) {
+                setGameState(current => ({
+                  ...current,
+                  walls: current.walls.filter(w => w.id !== wall.id)
+                }));
+              }
+              return true; // Удаляем снаряд
+            }
+            // Если стена неразрушаемая (стальная)
+            else if (wall.type === 'steel') {
+              return true; // Удаляем снаряд
+            }
+          }
+          return false;
+        });
+
+        // Проверяем попадание в ваш танк
+        const yourTankHit = tanks.some(tank => {
+          // Проверяем только попадание в ваш танк (первый танк)
+          if (tank.id !== tanks[0].id) return false;
+          
+          const dx = Math.abs(tank.position.x - projectile.position.x);
+          const dy = Math.abs(tank.position.y - projectile.position.y);
+          
+          if (dx < 0.3 && dy < 0.3) {
+            // Завершаем игру
+            setIsGameRunning(false);
+            setShowPlayerInput(true);
+            return true;
+          }
+          return false;
+        });
+
+        if (yourTankHit) {
+          return true; // Удаляем снаряд
+        }
+
+        // Проверяем границы поля
+        if (projectile.position.x < 0 || projectile.position.x >= GRID_SIZE ||
+            projectile.position.y < 0 || projectile.position.y >= GRID_SIZE) {
+          return false; // Удаляем снаряд
+        }
+
+        return !wallCollision;
       });
 
       return { ...prev, projectiles: updatedProjectiles };
@@ -369,18 +328,119 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updateTanks = () => {
     setTanks(prev => prev.map(tank => {
       if (tank.type === 'player') {
-        // Update player tank logic here
+        // Обновляем состояние танка с учетом бонусов
+        return {
+          ...tank,
+          speed: tank.speed || 1,
+          shield: tank.shield || false,
+          firepower: tank.firepower || 1
+        };
       }
       return tank;
     }));
   };
 
   const checkCollisions = () => {
-    // Collision detection logic here
+    // Создаем копию текущих бонусов
+    const currentPowerUps = [...powerUps];
+    const remainingPowerUps: PowerUp[] = [];
+
+    // Проверяем каждый бонус
+    currentPowerUps.forEach(powerUp => {
+      let isCollected = false;
+
+      // Проверяем столкновение с каждым танком
+      tanks.forEach(tank => {
+        // Проверяем расстояние между танком и бонусом
+        const dx = Math.abs(tank.position.x - powerUp.position.x);
+        const dy = Math.abs(tank.position.y - powerUp.position.y);
+        
+        // Если танк находится достаточно близко к бонусу (расстояние меньше 0.3)
+        if (dx < 0.3 && dy < 0.3) {
+          isCollected = true;
+          console.log('Bonus collected:', powerUp.type, 'at position:', powerUp.position, 'tank position:', tank.position); // Добавляем лог
+          
+          // Добавляем эффект мигания
+          setTanks(prev => prev.map(t => 
+            t.id === tank.id ? { ...t, isFlashing: true, flashColor: getPowerUpColor(powerUp.type) } : t
+          ));
+
+          // Убираем эффект мигания через 1 секунду
+          setTimeout(() => {
+            setTanks(prev => prev.map(t => 
+              t.id === tank.id ? { ...t, isFlashing: false, flashColor: undefined } : t
+            ));
+          }, 1000);
+          
+          // Применяем эффект бонуса
+          switch (powerUp.type) {
+            case 'speed':
+              setTanks(prev => prev.map(t => 
+                t.id === tank.id ? { ...t, speed: 2 } : t
+              ));
+              setTimeout(() => {
+                setTanks(prev => prev.map(t => 
+                  t.id === tank.id ? { ...t, speed: 1 } : t
+                ));
+              }, 10000);
+              break;
+            case 'shield':
+              setTanks(prev => prev.map(t => 
+                t.id === tank.id ? { ...t, shield: true } : t
+              ));
+              setTimeout(() => {
+                setTanks(prev => prev.map(t => 
+                  t.id === tank.id ? { ...t, shield: false } : t
+                ));
+              }, 10000);
+              break;
+            case 'firepower':
+              setTanks(prev => prev.map(t => 
+                t.id === tank.id ? { ...t, firepower: 2 } : t
+              ));
+              setTimeout(() => {
+                setTanks(prev => prev.map(t => 
+                  t.id === tank.id ? { ...t, firepower: 1 } : t
+                ));
+              }, 10000);
+              break;
+          }
+        }
+      });
+
+      // Если бонус не был собран, добавляем его в список оставшихся
+      if (!isCollected) {
+        remainingPowerUps.push(powerUp);
+      }
+    });
+
+    // Обновляем состояние бонусов только если есть изменения
+    if (remainingPowerUps.length !== powerUps.length) {
+      console.log('Updating powerups:', remainingPowerUps.length); // Добавляем лог
+      setPowerUps(remainingPowerUps);
+    }
+  };
+
+  // Функция для получения цвета бонуса
+  const getPowerUpColor = (type: PowerUpType): string => {
+    switch (type) {
+      case 'speed': return '#00ff00'; // Зеленый
+      case 'shield': return '#0000ff'; // Синий
+      case 'firepower': return '#ff0000'; // Красный
+      default: return '#ffffff'; // Белый
+    }
   };
 
   const updatePowerUps = () => {
-    setPowerUps(prev => prev.filter(powerUp => powerUp.duration > 0));
+    // Обновляем длительность бонусов и удаляем истекшие
+    const now = Date.now();
+    setPowerUps(prev => prev.filter(powerUp => {
+      // Проверяем, не истекло ли время действия бонуса
+      if (powerUp.duration <= 0) {
+        return false; // Удаляем бонус
+      }
+      return true; // Оставляем бонус
+    }));
   };
 
   const checkGameConditions = () => {
@@ -396,7 +456,17 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const addPlayer = (playerName: string) => {
-    if (players.length >= MAX_PLAYERS) return;
+    // Проверяем, есть ли уже игрок с таким именем
+    if (players.some(player => player.name === playerName)) {
+      console.log('Player with this name already exists');
+      return;
+    }
+
+    // Проверяем максимальное количество игроков
+    if (players.length >= MAX_PLAYERS) {
+      console.log('Maximum number of players reached');
+      return;
+    }
 
     const playerId = Date.now();
     const newPlayer: ExtendedPlayer = {
@@ -424,10 +494,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     setPlayers(prev => [...prev, newPlayer]);
     setTanks(prev => [...prev, newTank]);
-    
-    if (socket) {
-      socket.emit('player-join', { player: newPlayer, tank: newTank });
-    }
+    setShowPlayerInput(false); // Скрываем поле ввода после добавления игрока
   };
 
   const getPlayerColor = (playerId: number): string => {
@@ -436,9 +503,11 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const startGame = () => {
+    const randomLevel = Math.floor(Math.random() * LEVEL_COUNT) + 1;
+    setCurrentLevel(randomLevel);
     setIsGameRunning(true);
     setIsPaused(false);
-    loadLevel(currentLevel);
+    loadLevel(randomLevel);
   };
 
   const pauseGame = () => setIsPaused(true);
@@ -462,41 +531,64 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    setTanks(prev => prev.map(tank => {
-      if (tank.id === playerId) {
-        const newPosition = { ...tank.position };
-        switch (direction) {
-          case 'up': newPosition.y -= 0.2; break;
-          case 'right': newPosition.x += 0.2; break;
-          case 'down': newPosition.y += 0.2; break;
-          case 'left': newPosition.x -= 0.2; break;
-        }
-        return { ...tank, position: newPosition, direction, lastMoved: now };
+    // Рассчитываем новую позицию с учетом скорости из бонуса
+    const newPosition = { ...tank.position };
+    const moveSpeed = 0.2 * (tank.speed || 1); // Умножаем базовую скорость на множитель из бонуса
+    switch (direction) {
+      case 'up': newPosition.y -= moveSpeed; break;
+      case 'right': newPosition.x += moveSpeed; break;
+      case 'down': newPosition.y += moveSpeed; break;
+      case 'left': newPosition.x -= moveSpeed; break;
+    }
+
+    // Проверяем границы поля в направлении движения
+    switch (direction) {
+      case 'up':
+        if (newPosition.y < 0) return;
+        break;
+      case 'right':
+        if (newPosition.x >= GRID_SIZE - 0.9) return;
+        break;
+      case 'down':
+        if (newPosition.y >= GRID_SIZE - 0.9) return;
+        break;
+      case 'left':
+        if (newPosition.x < 0) return;
+        break;
+    }
+
+    // Проверяем столкновение со стенами
+    const wallCollision = gameState.walls.some(wall => {
+      if (wall.type === 'forest') return false; // Лес не препятствие
+      const dx = Math.abs(wall.position.x - newPosition.x);
+      const dy = Math.abs(wall.position.y - newPosition.y);
+      return dx < 0.9 && dy < 0.9;
+    });
+    if (wallCollision) {
+      return;
+    }
+
+    // Проверяем столкновение с другими танками
+    const tankCollision = tanks.some(otherTank => {
+      if (otherTank.id === playerId) return false;
+      const dx = Math.abs(otherTank.position.x - newPosition.x);
+      const dy = Math.abs(otherTank.position.y - newPosition.y);
+      return dx < 0.9 && dy < 0.9;
+    });
+    if (tankCollision) {
+      return;
+    }
+
+    // Если все проверки пройдены, обновляем позицию
+    setTanks(prev => prev.map(t => {
+      if (t.id === playerId) {
+        return { ...t, position: newPosition, direction, lastMoved: now };
       }
-      return tank;
+      return t;
     }));
 
-    if (socket) {
-      const updatedTank = tanks.find(t => t.id === playerId);
-      if (updatedTank) {
-        socket.emit('player-move', { 
-          id: playerId,
-          x: updatedTank.position.x, 
-          y: updatedTank.position.y, 
-          rotation: getRotationFromDirection(direction)
-        });
-      }
-    }
-  };
-
-  const getRotationFromDirection = (direction: Direction): number => {
-    switch (direction) {
-      case 'up': return 0;
-      case 'right': return 90;
-      case 'down': return 180;
-      case 'left': return 270;
-      default: return 0;
-    }
+    // Проверяем столкновение с бонусами после обновления позиции
+    checkCollisions();
   };
 
   const fireProjectile = (playerId: number) => {
@@ -506,9 +598,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    // Проверяем, прошло ли достаточно времени с последнего выстрела
     const now = Date.now();
-    if (tank.lastFired && now - tank.lastFired < 333) { // 333ms = 3 выстрела в секунду
+    if (tank.lastFired && now - tank.lastFired < 333) {
       return;
     }
 
@@ -517,11 +608,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       position: { x: tank.position.x, y: tank.position.y },
       direction: tank.direction,
       ownerId: playerId,
-      damage: 1,
+      damage: tank.firepower, // Используем силу выстрелов из бонуса
       speed: 0.1
     };
 
-    // Обновляем время последнего выстрела
     setTanks(prev => prev.map(t => 
       t.id === playerId ? { ...t, lastFired: now } : t
     ));
@@ -530,38 +620,11 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       ...prev,
       projectiles: [...prev.projectiles, projectile]
     }));
-
-    if (socket) {
-      socket.emit('player-shoot', { 
-        x: projectile.position.x, 
-        y: projectile.position.y, 
-        direction: getDirectionVector(tank.direction)
-      });
-    }
   };
 
-  const getDirectionVector = (direction: Direction): { x: number; y: number } => {
-    switch (direction) {
-      case 'up': return { x: 0, y: -1 };
-      case 'right': return { x: 1, y: 0 };
-      case 'down': return { x: 0, y: 1 };
-      case 'left': return { x: -1, y: 0 };
-      default: return { x: 0, y: -1 };
-    }
+  const togglePlayerInput = () => {
+    setShowPlayerInput(prev => !prev);
   };
-
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (socket && players) {
-        socket.emit('player-leave', players.map(p => p.id));
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [socket, players]);
 
   return (
     <GameContext.Provider
@@ -574,13 +637,15 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isGameRunning,
         isPaused,
         powerUps,
+        showPlayerInput,
         addPlayer,
         startGame,
         pauseGame,
         resumeGame,
         restartGame,
         movePlayer,
-        fireProjectile
+        fireProjectile,
+        togglePlayerInput
       }}
     >
       {children}

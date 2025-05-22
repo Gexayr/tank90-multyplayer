@@ -48,16 +48,6 @@ const generateLevel1 = (grid: number[][]): number[][] => {
   grid[9][3] = 2;
   grid[9][9] = 2;
   
-  // Add base at the center bottom
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2)] = 9;
-  
-  // Add protection around the base
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) - 1] = 1;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2)] = 1;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) + 1] = 1;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) - 1] = 1;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) + 1] = 1;
-  
   return grid;
 };
 
@@ -94,16 +84,6 @@ const generateLevel2 = (grid: number[][]): number[][] => {
       grid[y][x] = 4; // Forest
     }
   }
-  
-  // Add base at the center bottom
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2)] = 9;
-  
-  // Add steel protection around the base
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) - 1] = 2;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2)] = 2;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) + 1] = 2;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) - 1] = 2;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) + 1] = 2;
   
   return grid;
 };
@@ -163,16 +143,6 @@ const generateLevel3 = (grid: number[][]): number[][] => {
       grid[y][x] = 5; // Ice
     }
   }
-  
-  // Add base at the center bottom
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2)] = 9;
-  
-  // Add mixed protection around the base
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) - 1] = 2; // Steel
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2)] = 1; // Brick
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) + 1] = 2; // Steel
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) - 1] = 1; // Brick
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) + 1] = 1; // Brick
   
   return grid;
 };
@@ -256,16 +226,6 @@ const generateLevel4 = (grid: number[][]): number[][] => {
   grid[GRID_SIZE - 2][GRID_SIZE - 1] = 0;
   grid[GRID_SIZE - 1][GRID_SIZE - 2] = 0;
   
-  // Add base at the center bottom
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2)] = 9;
-  
-  // Add steel protection around the base
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) - 1] = 2;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2)] = 2;
-  grid[GRID_SIZE - 3][Math.floor(GRID_SIZE / 2) + 1] = 2;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) - 1] = 2;
-  grid[GRID_SIZE - 2][Math.floor(GRID_SIZE / 2) + 1] = 2;
-  
   return grid;
 };
 
@@ -336,21 +296,6 @@ const generateLevel5 = (grid: number[][]): number[][] => {
   grid[GRID_SIZE - 3][GRID_SIZE - 2] = 0;
   grid[GRID_SIZE - 2][GRID_SIZE - 3] = 0;
   
-  // Add base at the center
-  const mid = Math.floor(GRID_SIZE / 2);
-  grid[mid][mid] = 9;
-  
-  // Add strong protection around the base
-  grid[mid - 1][mid - 1] = 2; // Steel walls diagonally
-  grid[mid - 1][mid + 1] = 2;
-  grid[mid + 1][mid - 1] = 2;
-  grid[mid + 1][mid + 1] = 2;
-  
-  grid[mid - 1][mid] = 2; // Steel walls adjacently
-  grid[mid + 1][mid] = 2;
-  grid[mid][mid - 1] = 2;
-  grid[mid][mid + 1] = 2;
-  
   return grid;
 };
 
@@ -399,25 +344,6 @@ const generateRandomLevel = (grid: number[][], level: number): number[][] => {
   grid[GRID_SIZE - 1][GRID_SIZE - 1] = 0; // Bottom-right
   grid[GRID_SIZE - 2][GRID_SIZE - 1] = 0;
   grid[GRID_SIZE - 1][GRID_SIZE - 2] = 0;
-  
-  // Add base at a random location
-  const baseX = 3 + Math.floor(Math.random() * (GRID_SIZE - 6));
-  const baseY = 3 + Math.floor(Math.random() * (GRID_SIZE - 6));
-  grid[baseY][baseX] = 9;
-  
-  // Add protection around the base
-  for (let i = -1; i <= 1; i++) {
-    for (let j = -1; j <= 1; j++) {
-      if (i === 0 && j === 0) continue; // Skip the base itself
-      
-      const y = baseY + i;
-      const x = baseX + j;
-      
-      if (y >= 0 && y < GRID_SIZE && x >= 0 && x < GRID_SIZE) {
-        grid[y][x] = Math.random() < 0.7 ? 2 : 1; // 70% steel, 30% brick
-      }
-    }
-  }
   
   return grid;
 };

@@ -13,7 +13,9 @@ const GameInterface: React.FC = () => {
     startGame,
     pauseGame,
     resumeGame,
-    restartGame
+    restartGame,
+    showPlayerInput,
+    togglePlayerInput
   } = useGameContext();
   
   const [playerName, setPlayerName] = useState('');
@@ -37,27 +39,29 @@ const GameInterface: React.FC = () => {
         <div className="flex flex-col gap-4">
           <h2 className="text-xl font-bold text-yellow-400 mb-1">Game Setup</h2>
           
-          <div className="flex flex-col gap-2">
-            <label className="text-gray-300 text-sm">Add Player</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="Player name"
-                className="flex-1 px-3 py-2 bg-gray-700 rounded text-white"
-                maxLength={10}
-                size={12}
-              />
-              <button
-                onClick={handleAddPlayer}
-                className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition-colors"
-                title="Add Player"
-              >
-                <Plus size={18} />
-              </button>
+          {showPlayerInput && (
+            <div className="flex flex-col gap-2">
+              <label className="text-gray-300 text-sm">Add Player</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder="Player name"
+                  className="flex-1 px-3 py-2 bg-gray-700 rounded text-white"
+                  maxLength={10}
+                  size={12}
+                />
+                <button
+                  onClick={handleAddPlayer}
+                  className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition-colors"
+                  title="Add Player"
+                >
+                  <Plus size={18} />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
           
           {players.length > 0 && (
             <div className="mt-2">

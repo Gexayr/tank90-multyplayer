@@ -39,15 +39,19 @@ const PowerUp: React.FC<PowerUpProps> = ({ type, position }) => {
   
   return (
     <div
-      className="absolute z-15 power-up flex items-center justify-center rounded"
+      className="absolute power-up flex items-center justify-center rounded"
       style={{
         width: `${TILE_SIZE}px`,
         height: `${TILE_SIZE}px`,
-        left: `${position.x * TILE_SIZE}px`,
-        top: `${position.y * TILE_SIZE}px`,
+        left: `${Math.floor(position.x) * TILE_SIZE}px`,
+        top: `${Math.floor(position.y) * TILE_SIZE}px`,
         backgroundColor: color,
         boxShadow: `0 0 8px ${color}`,
-        color: 'white'
+        color: 'white',
+        pointerEvents: 'none',
+        zIndex: 20,
+        transform: 'translateZ(0)',
+        animation: 'pulse 1s infinite'
       }}
     >
       {icon}

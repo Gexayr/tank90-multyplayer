@@ -21,6 +21,8 @@ export interface Tank {
   lastFired: number;
   shield: boolean;
   color: string;
+  isFlashing?: boolean;
+  flashColor?: string;
 }
 
 export interface Player {

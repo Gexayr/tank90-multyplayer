@@ -36,7 +36,7 @@ const Terrain: React.FC<TerrainProps> = ({ type, position }) => {
           backgroundImage: 'radial-gradient(circle, transparent 40%, rgba(0,0,0,0.1) 40%)',
           backgroundSize: '8px 8px',
           border: '1px solid #1e7b47',
-          zIndex: 15
+          zIndex: 25
         };
       default:
         return {};
@@ -51,6 +51,7 @@ const Terrain: React.FC<TerrainProps> = ({ type, position }) => {
         height: `${TILE_SIZE}px`,
         left: `${position.x * TILE_SIZE}px`,
         top: `${position.y * TILE_SIZE}px`,
+        zIndex: 5,
         ...getTerrainStyle()
       }}
     />

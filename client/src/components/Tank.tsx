@@ -7,7 +7,7 @@ interface TankProps {
 }
 
 const Tank: React.FC<TankProps> = ({ tank }) => {
-  const { position, direction, type, shield, color } = tank;
+  const { position, direction, type, shield, color, isFlashing, flashColor } = tank;
   
   // Calculate rotation angle based on direction
   const getRotationAngle = () => {
@@ -30,6 +30,17 @@ const Tank: React.FC<TankProps> = ({ tank }) => {
     };
     return colorMap[colorName] || '#FFFFFF';
   };
+
+  // Добавляем анимацию мигания
+  const getFlashingStyle = () => {
+    if (isFlashing && flashColor) {
+      return {
+        animation: 'flash 0.2s infinite',
+        backgroundColor: flashColor
+      };
+    }
+    return {};
+  };
   
   return (
     <div
@@ -42,9 +53,10 @@ const Tank: React.FC<TankProps> = ({ tank }) => {
         backgroundColor: getColorHex(color),
         borderRadius: '2px',
         transform: `rotate(${getRotationAngle()}deg)`,
-        zIndex: 10,
+        zIndex: 20,
         transition: 'transform 0.1s, left 0.1s, top 0.1s',
-        boxShadow: shield ? '0 0 8px 4px rgba(100, 200, 255, 0.7)' : 'none'
+        boxShadow: shield ? '0 0 8px 4px rgba(100, 200, 255, 0.7)' : 'none',
+        ...getFlashingStyle()
       }}
     >
       {/* Tank body */}
