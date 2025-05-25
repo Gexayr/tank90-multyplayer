@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useGameContext } from '../context/GameContext';
-import { Direction, Position, Wall, PowerUp, Bullet, Tank } from '../types/gameTypes';
-import { TILE_SIZE, GRID_SIZE } from '../constants/gameConfig';
+import { TILE_SIZE } from '../constants/gameConfig';
+import { Tank, Bullet, Wall, PowerUp } from '../types/gameTypes';
 
 const GameField: React.FC = () => {
   const { tanks = [], walls = [], powerUps = [], bullets = [] } = useGameContext();
@@ -11,206 +11,185 @@ const GameField: React.FC = () => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size to match window size
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // Calculate viewport center
     const viewportWidth = canvas.width;
     const viewportHeight = canvas.height;
     const centerX = viewportWidth / 2;
     const centerY = viewportHeight / 2;
 
-    // Find the first player's tank (you might want to track the active player differently)
     const playerTank = tanks[0];
     if (playerTank) {
-      // Calculate the offset to center the player's tank
-      viewportRef.current = {
-        x: centerX - (playerTank.position.x * TILE_SIZE),
-        y: centerY - (playerTank.position.y * TILE_SIZE)
-      };
+      const targetX = centerX - playerTank.position.x * TILE_SIZE;
+      const targetY = centerY - playerTank.position.y * TILE_SIZE;
+
+      const deadZoneX = viewportWidth * 0.2;
+      const deadZoneY = viewportHeight * 0.2;
+
+      const dx = targetX - viewportRef.current.x;
+      const dy = targetY - viewportRef.current.y;
+
+      if (Math.abs(dx) > deadZoneX / 2) {
+        viewportRef.current.x += dx - Math.sign(dx) * deadZoneX / 2;
+      }
+      if (Math.abs(dy) > deadZoneY / 2) {
+        viewportRef.current.y += dy - Math.sign(dy) * deadZoneY / 2;
+      }
     }
 
-    // Clear the canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate visible grid range based on viewport
+    const drawTank = (tank: Tank) => {
+      const x = tank.position.x * TILE_SIZE + viewportRef.current.x;
+      const y = tank.position.y * TILE_SIZE + viewportRef.current.y;
+      if (x < -TILE_SIZE || x > canvas.width || y < -TILE_SIZE || y > canvas.height) return;
+
+      ctx.fillStyle = tank.color;
+      ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+      const cx = x + TILE_SIZE / 2;
+      const cy = y + TILE_SIZE / 2;
+
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      switch (tank.direction) {
+        case 'up':
+          ctx.moveTo(cx, y);
+          ctx.lineTo(cx - TILE_SIZE / 4, y + TILE_SIZE / 4);
+          ctx.lineTo(cx + TILE_SIZE / 4, y + TILE_SIZE / 4);
+          break;
+        case 'right':
+          ctx.moveTo(x + TILE_SIZE, cy);
+          ctx.lineTo(x + TILE_SIZE - TILE_SIZE / 4, cy - TILE_SIZE / 4);
+          ctx.lineTo(x + TILE_SIZE - TILE_SIZE / 4, cy + TILE_SIZE / 4);
+          break;
+        case 'down':
+          ctx.moveTo(cx, y + TILE_SIZE);
+          ctx.lineTo(cx - TILE_SIZE / 4, y + TILE_SIZE - TILE_SIZE / 4);
+          ctx.lineTo(cx + TILE_SIZE / 4, y + TILE_SIZE - TILE_SIZE / 4);
+          break;
+        case 'left':
+          ctx.moveTo(x, cy);
+          ctx.lineTo(x + TILE_SIZE / 4, cy - TILE_SIZE / 4);
+          ctx.lineTo(x + TILE_SIZE / 4, cy + TILE_SIZE / 4);
+          break;
+      }
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    const drawBullet = (bullet: Bullet) => {
+      const x = bullet.position.x * TILE_SIZE + viewportRef.current.x;
+      const y = bullet.position.y * TILE_SIZE + viewportRef.current.y;
+      if (x < -TILE_SIZE || x > canvas.width || y < -TILE_SIZE || y > canvas.height) return;
+
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE / 8, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    const drawPowerUp = (powerUp: PowerUp) => {
+      const x = powerUp.position.x * TILE_SIZE + viewportRef.current.x;
+      const y = powerUp.position.y * TILE_SIZE + viewportRef.current.y;
+      if (x < -TILE_SIZE || x > canvas.width || y < -TILE_SIZE || y > canvas.height) return;
+
+      ctx.fillStyle = '#FF0000';
+      ctx.beginPath();
+      ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE / 4, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    const drawWall = (wall: Wall) => {
+      const x = wall.position.x * TILE_SIZE + viewportRef.current.x;
+      const y = wall.position.y * TILE_SIZE + viewportRef.current.y;
+      if (x < -TILE_SIZE || x > canvas.width || y < -TILE_SIZE || y > canvas.height) return;
+
+      switch (wall.type) {
+        case 'brick':
+          // Разрушаемая стена с текстурой кирпича
+          ctx.fillStyle = 'rgba(139, 69, 19, 0.8)'; // Кирпичный цвет с небольшой прозрачностью
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+          ctx.strokeStyle = 'rgba(107, 52, 16, 0.9)';
+          ctx.lineWidth = 1;
+          // Горизонтальные линии
+          for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
+            ctx.beginPath();
+            ctx.moveTo(x, y + i);
+            ctx.lineTo(x + TILE_SIZE, y + i);
+            ctx.stroke();
+          }
+          // Вертикальные линии
+          for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
+            ctx.beginPath();
+            ctx.moveTo(x + i, y);
+            ctx.lineTo(x + i, y + TILE_SIZE);
+            ctx.stroke();
+          }
+          break;
+
+        case 'steel':
+          // Неразрушаемая стена с металлической текстурой
+          ctx.fillStyle = 'rgba(105, 105, 105, 0.8)'; // Серый цвет с небольшой прозрачностью
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+          ctx.strokeStyle = 'rgba(64, 64, 64, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+          // Добавляем блики
+          ctx.fillStyle = 'rgba(128, 128, 128, 0.9)';
+          ctx.fillRect(x + 4, y + 4, TILE_SIZE - 8, 2);
+          break;
+
+        case 'forest':
+          // Лес (полупрозрачный)
+          ctx.fillStyle = 'rgba(34, 139, 34, 0.6)'; // Зеленый цвет с прозрачностью
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+          // Добавляем текстуру деревьев (более темный зеленый)
+          ctx.fillStyle = 'rgba(0, 100, 0, 0.7)';
+          for (let i = 0; i < 3; i++) {
+            const treeX = x + (TILE_SIZE / 4) * (i + 1);
+            const treeY = y + TILE_SIZE / 2;
+            ctx.beginPath();
+            ctx.arc(treeX, treeY, TILE_SIZE / 6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+
+        case 'water':
+          // Вода (непроходимая)
+          ctx.fillStyle = 'rgba(30, 144, 255, 0.7)'; // Синий цвет с прозрачностью
+          ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+          // Добавляем волны
+          ctx.strokeStyle = 'rgba(0, 191, 255, 0.8)';
+          ctx.lineWidth = 1;
+          for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
+            ctx.beginPath();
+            ctx.moveTo(x, y + i);
+            ctx.lineTo(x + TILE_SIZE, y + i);
+            ctx.stroke();
+          }
+          break;
+      }
+    };
+
+    // Отрисовка всех элементов
+    powerUps.forEach(drawPowerUp);
+    bullets.forEach(drawBullet);
+    tanks.forEach(drawTank);
+    walls.forEach(drawWall);
+
+    // Grid
+    ctx.strokeStyle = 'rgba(51,51,51,0.1)';
+    ctx.lineWidth = 0.5;
     const startX = Math.floor(-viewportRef.current.x / TILE_SIZE);
     const startY = Math.floor(-viewportRef.current.y / TILE_SIZE);
     const endX = Math.ceil((canvas.width - viewportRef.current.x) / TILE_SIZE);
     const endY = Math.ceil((canvas.height - viewportRef.current.y) / TILE_SIZE);
 
-    // Draw power-ups first (bottom layer)
-    powerUps?.forEach((powerUp: PowerUp) => {
-      const screenX = powerUp.position.x * TILE_SIZE + viewportRef.current.x;
-      const screenY = powerUp.position.y * TILE_SIZE + viewportRef.current.y;
-      
-      if (screenX >= -TILE_SIZE && screenX <= canvas.width &&
-          screenY >= -TILE_SIZE && screenY <= canvas.height) {
-        ctx.fillStyle = '#FF0000';
-        ctx.beginPath();
-        ctx.arc(
-          screenX + TILE_SIZE / 2,
-          screenY + TILE_SIZE / 2,
-          TILE_SIZE / 4,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-    });
-
-    // Draw bullets (middle layer)
-    bullets?.forEach((bullet: Bullet) => {
-      const screenX = bullet.position.x * TILE_SIZE + viewportRef.current.x;
-      const screenY = bullet.position.y * TILE_SIZE + viewportRef.current.y;
-      
-      if (screenX >= -TILE_SIZE && screenX <= canvas.width &&
-          screenY >= -TILE_SIZE && screenY <= canvas.height) {
-        ctx.fillStyle = '#FFD700';
-        ctx.beginPath();
-        ctx.arc(
-          screenX + TILE_SIZE / 2,
-          screenY + TILE_SIZE / 2,
-          TILE_SIZE / 8,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-    });
-
-    // Draw tanks (middle layer)
-    tanks?.forEach((tank: Tank) => {
-      const screenX = tank.position.x * TILE_SIZE + viewportRef.current.x;
-      const screenY = tank.position.y * TILE_SIZE + viewportRef.current.y;
-      
-      if (screenX >= -TILE_SIZE && screenX <= canvas.width &&
-          screenY >= -TILE_SIZE && screenY <= canvas.height) {
-        // Draw tank body
-        ctx.fillStyle = tank.color;
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-
-        // Draw tank direction indicator
-        ctx.fillStyle = '#000';
-        const centerX = screenX + TILE_SIZE / 2;
-        const centerY = screenY + TILE_SIZE / 2;
-        const indicatorLength = TILE_SIZE / 2;
-
-        ctx.beginPath();
-        switch (tank.direction) {
-          case 'up':
-            ctx.moveTo(centerX, screenY);
-            ctx.lineTo(centerX - TILE_SIZE / 4, screenY + TILE_SIZE / 4);
-            ctx.lineTo(centerX + TILE_SIZE / 4, screenY + TILE_SIZE / 4);
-            break;
-          case 'right':
-            ctx.moveTo(screenX + TILE_SIZE, centerY);
-            ctx.lineTo(screenX + TILE_SIZE - TILE_SIZE / 4, centerY - TILE_SIZE / 4);
-            ctx.lineTo(screenX + TILE_SIZE - TILE_SIZE / 4, centerY + TILE_SIZE / 4);
-            break;
-          case 'down':
-            ctx.moveTo(centerX, screenY + TILE_SIZE);
-            ctx.lineTo(centerX - TILE_SIZE / 4, screenY + TILE_SIZE - TILE_SIZE / 4);
-            ctx.lineTo(centerX + TILE_SIZE / 4, screenY + TILE_SIZE - TILE_SIZE / 4);
-            break;
-          case 'left':
-            ctx.moveTo(screenX, centerY);
-            ctx.lineTo(screenX + TILE_SIZE / 4, centerY - TILE_SIZE / 4);
-            ctx.lineTo(screenX + TILE_SIZE / 4, centerY + TILE_SIZE / 4);
-            break;
-        }
-        ctx.closePath();
-        ctx.fill();
-      }
-    });
-
-    // Draw walls and terrain (middle layer)
-    walls?.forEach((wall: Wall) => {
-      const screenX = wall.position.x * TILE_SIZE + viewportRef.current.x;
-      const screenY = wall.position.y * TILE_SIZE + viewportRef.current.y;
-      
-      if (screenX >= -TILE_SIZE && screenX <= canvas.width &&
-          screenY >= -TILE_SIZE && screenY <= canvas.height) {
-        
-        switch (wall.type) {
-          case 'brick':
-            // Разрушаемая стена
-            ctx.fillStyle = 'rgba(139, 69, 19, 0.7)'; // Полупрозрачный кирпичный цвет
-            ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-            // Добавляем текстуру кирпича
-            ctx.strokeStyle = 'rgba(107, 52, 16, 0.9)';
-            ctx.lineWidth = 1;
-            // Горизонтальные линии
-            for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
-              ctx.beginPath();
-              ctx.moveTo(screenX, screenY + i);
-              ctx.lineTo(screenX + TILE_SIZE, screenY + i);
-              ctx.stroke();
-            }
-            // Вертикальные линии
-            for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
-              ctx.beginPath();
-              ctx.moveTo(screenX + i, screenY);
-              ctx.lineTo(screenX + i, screenY + TILE_SIZE);
-              ctx.stroke();
-            }
-            break;
-
-          case 'steel':
-            // Неразрушаемая стена
-            ctx.fillStyle = 'rgba(105, 105, 105, 0.7)'; // Полупрозрачный серый цвет
-            ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-            // Добавляем металлическую текстуру
-            ctx.strokeStyle = 'rgba(64, 64, 64, 0.9)';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
-            // Добавляем блики
-            ctx.fillStyle = 'rgba(128, 128, 128, 0.9)';
-            ctx.fillRect(screenX + 4, screenY + 4, TILE_SIZE - 8, 2);
-            break;
-
-          case 'forest':
-            // Лес
-            ctx.fillStyle = 'rgba(34, 139, 34, 0.7)'; // Полупрозрачный зеленый цвет
-            ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-            // Добавляем текстуру деревьев
-            ctx.fillStyle = 'rgba(0, 100, 0, 0.9)';
-            for (let i = 0; i < 3; i++) {
-              const treeX = screenX + (TILE_SIZE / 4) * (i + 1);
-              const treeY = screenY + TILE_SIZE / 2;
-              ctx.beginPath();
-              ctx.arc(treeX, treeY, TILE_SIZE / 6, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            break;
-
-          case 'water':
-            // Вода
-            ctx.fillStyle = 'rgba(30, 144, 255, 0.7)'; // Полупрозрачный синий цвет
-            ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-            // Добавляем волны
-            ctx.strokeStyle = 'rgba(0, 191, 255, 0.9)';
-            ctx.lineWidth = 1;
-            for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 4) {
-              ctx.beginPath();
-              ctx.moveTo(screenX, screenY + i);
-              ctx.lineTo(screenX + TILE_SIZE, screenY + i);
-              ctx.stroke();
-            }
-            break;
-        }
-      }
-    });
-
-    // Draw grid last (top layer)
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    // Draw visible grid lines
     for (let x = startX; x <= endX; x++) {
       ctx.beginPath();
       ctx.moveTo(x * TILE_SIZE + viewportRef.current.x, 0);
@@ -228,19 +207,19 @@ const GameField: React.FC = () => {
   }, [tanks, walls, powerUps, bullets]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="game-field"
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        backgroundColor: '#1a1a1a'
-      }}
-    />
+      <canvas
+          ref={canvasRef}
+          className="game-field"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: '#1a1a1a'
+          }}
+      />
   );
 };
 
-export default GameField; 
+export default GameField;

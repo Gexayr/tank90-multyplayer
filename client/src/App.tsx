@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
 import { GameProvider } from './context/GameContext';
 import GameBoard from './components/GameBoard';
-import GameInterface from './components/GameInterface';
 import GameControls from './components/GameControls';
 import Leaderboard from './components/Leaderboard';
 import './styles/App.css';
