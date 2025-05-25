@@ -1,9 +1,9 @@
 import { io, Socket } from 'socket.io-client';
+import { GameState } from '../context/GameContext';
 
 class WebSocketService {
   private socket: Socket | null = null;
   private static instance: WebSocketService;
-  private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
   private constructor() {}
 
@@ -14,9 +14,8 @@ class WebSocketService {
     return WebSocketService.instance;
   }
 
-  connect() {
-    console.log('Connecting to server:', this.SERVER_URL);
-    this.socket = io(this.SERVER_URL);
+  connect(url: string): void {
+    this.socket = io(url);
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
@@ -26,15 +25,33 @@ class WebSocketService {
       console.log('Disconnected from server');
     });
 
-    this.socket.on('connect_error', (error: Error) => {
-      console.error('Connection error:', error.message);
+    this.socket.on('error', (error: Error) => {
+      console.error('WebSocket error:', error);
     });
   }
 
-  disconnect() {
+  disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
+    }
+  }
+
+  emit(event: string, data: any): void {
+    if (this.socket) {
+      this.socket.emit(event, data);
+    }
+  }
+
+  on(event: string, callback: (data: any) => void): void {
+    if (this.socket) {
+      this.socket.on(event, callback);
+    }
+  }
+
+  off(event: string): void {
+    if (this.socket) {
+      this.socket.off(event);
     }
   }
 

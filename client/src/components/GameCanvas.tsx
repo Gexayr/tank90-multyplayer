@@ -313,10 +313,30 @@ const GameCanvas: React.FC = () => {
     });
 
     wsService.onGameStateUpdate((state) => {
-      // Create tanks for all players
+      // Update existing tanks or create new ones if they don't exist
       state.players.forEach((player: any) => {
-        if (!tanksRef.current.has(player.id)) {
+        const existingTank = tanksRef.current.get(player.id);
+        if (existingTank) {
+          // Update existing tank position and rotation
+          existingTank.sprite.x = player.x;
+          existingTank.sprite.y = player.y;
+          existingTank.rotation = player.rotation;
+          existingTank.sprite.rotation = player.rotation;
+          updateHealthBar(existingTank);
+        } else {
+          // Create new tank only if it doesn't exist
           createTank(player.id, player.x, player.y, player.color);
+        }
+      });
+
+      // Remove tanks that are no longer in the game state
+      tanksRef.current.forEach((tank, id) => {
+        if (!state.players.find((p: any) => p.id === id)) {
+          if (appRef.current) {
+            appRef.current.stage.removeChild(tank.sprite);
+            appRef.current.stage.removeChild(tank.healthBar);
+          }
+          tanksRef.current.delete(id);
         }
       });
 
@@ -468,8 +488,8 @@ const GameCanvas: React.FC = () => {
       <div 
         ref={canvasRef} 
         style={{ 
-          width: '800px', 
-          height: '600px',
+          width: '1800px',
+          height: '1600px',
           margin: '0 auto',
           border: '2px solid #333'
         }}

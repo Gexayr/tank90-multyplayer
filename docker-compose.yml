@@ -12,6 +12,7 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
+      - VITE_API_URL=http://localhost:3000
     depends_on:
       - backend
 
@@ -26,6 +27,7 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
+      - PORT=3000
       - MONGO_URI=mongodb://mongo:27017/tank90
     depends_on:
       - mongo

@@ -1,26 +1,43 @@
-import { GRID_SIZE } from '../constants/gameConfig';
+import { GRID_SIZE, WALL_TYPES } from '../constants/gameConfig';
 
 // Generate a level grid based on level number
 export const generateLevel = (level: number): number[][] => {
-  // Initialize an empty grid filled with zeros (empty spaces)
   const grid: number[][] = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-  
-  // Fill the grid based on level patterns
-  switch (level) {
-    case 1:
-      return generateLevel1(grid);
-    case 2:
-      return generateLevel2(grid);
-    case 3:
-      return generateLevel3(grid);
-    case 4:
-      return generateLevel4(grid);
-    case 5:
-      return generateLevel5(grid);
-    default:
-      // For levels beyond 5, generate a random level with increasing difficulty
-      return generateRandomLevel(grid, level);
+
+  // Add walls
+  for (let i = 0; i < GRID_SIZE; i++) {
+    for (let j = 0; j < GRID_SIZE; j++) {
+      // Add border walls
+      if (i === 0 || i === GRID_SIZE - 1 || j === 0 || j === GRID_SIZE - 1) {
+        grid[i][j] = 2; // Steel walls
+      }
+      // Add random walls
+      else if (Math.random() < 0.1) {
+        grid[i][j] = Math.random() < 0.7 ? 1 : 2; // 70% brick walls, 30% steel walls
+      }
+    }
   }
+
+  // Clear spawn areas
+  const spawnAreas = [
+    { x: 1, y: 1 },
+    { x: GRID_SIZE - 2, y: 1 },
+    { x: 1, y: GRID_SIZE - 2 },
+    { x: GRID_SIZE - 2, y: GRID_SIZE - 2 }
+  ];
+
+  spawnAreas.forEach(area => {
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        if (area.x + i >= 0 && area.x + i < GRID_SIZE && 
+            area.y + j >= 0 && area.y + j < GRID_SIZE) {
+          grid[area.y + j][area.x + i] = 0;
+        }
+      }
+    }
+  });
+
+  return grid;
 };
 
 // Cell values in the grid:

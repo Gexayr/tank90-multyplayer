@@ -27,7 +27,7 @@ function App() {
           </div>
           
           <div className="game-sidebar w-full lg:w-64 flex flex-col gap-4">
-            <GameInterface />
+            {/*<GameInterface />*/}
             <Leaderboard />
           </div>
         </main>
