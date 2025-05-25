@@ -1,24 +1,17 @@
+// Test comment to trigger linter update
 import React, { useState, useEffect } from 'react';
 import { useGameContext } from '../context/GameContext';
-import { Play, Pause, RotateCcw, Trophy, Clock, Globe, Star } from 'lucide-react';
 
 const GameInterface: React.FC = () => {
   const {
     isGameRunning,
-    isPaused,
-    currentLevel,
     players,
-    score,
     addPlayer,
     startGame,
-    pauseGame,
-    resumeGame,
-    restartGame,
   } = useGameContext();
   
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState('');
-  const [leaderboardFilter, setLeaderboardFilter] = useState<'all' | 'today' | 'week'>('all');
   const [isLoading, setIsLoading] = useState(true);
   
   useEffect(() => {
@@ -26,6 +19,12 @@ const GameInterface: React.FC = () => {
     const timer = setTimeout(() => setIsLoading(false), 1000);
     return () => clearTimeout(timer);
   }, []);
+
+  // useEffect(() => {
+  //   if (players.length === 1 && !isGameRunning) {
+  //     startGame();
+  //   }
+  // }, [players, isGameRunning, startGame]);
 
   const handleAddPlayerAndStart = () => {
     if (!playerName.trim()) {
@@ -86,7 +85,7 @@ const GameInterface: React.FC = () => {
                 setPlayerName(e.target.value);
                 setError('');
               }}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               placeholder="Your name"
               className="px-4 py-3 bg-gray-700/50 border border-gray-600 rounded text-white text-lg text-center placeholder-gray-400 focus:outline-none focus:border-yellow-400 transition-colors"
               maxLength={10}
@@ -104,7 +103,6 @@ const GameInterface: React.FC = () => {
                   : 'bg-gray-600 text-gray-400 cursor-not-allowed border-2 border-gray-500'
               }`}
             >
-              <Play size={24} />
               Start Game
             </button>
           </div>

@@ -35,7 +35,7 @@ const GameCanvas: React.FC = () => {
   const [localScore, setLocalScore] = useState(0);
 
   // Create health bar for tank
-  const createHealthBar = (tank: Tank) => {
+  const createHealthBar = () => {
     const healthBar = new PIXI.Graphics();
     healthBar.beginFill(0x00FF00);
     healthBar.drawRect(-20, -30, 40, 5);
@@ -345,7 +345,7 @@ const GameCanvas: React.FC = () => {
         if (!bulletsRef.current.has(bullet.id)) {
           const tank = tanksRef.current.get(bullet.playerId);
           if (tank) {
-            createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint, bullet.playerId);
+            createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, 0, bullet.playerId);
           }
         }
       });
@@ -354,7 +354,7 @@ const GameCanvas: React.FC = () => {
     wsService.onBulletCreate((bullet) => {
       const tank = tanksRef.current.get(bullet.playerId);
       if (tank) {
-        createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, tank.sprite.tint, bullet.playerId);
+        createBullet(bullet.id, bullet.x, bullet.y, bullet.direction, 0, bullet.playerId);
       }
     });
 

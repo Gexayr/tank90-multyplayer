@@ -7,7 +7,7 @@ export const MAX_PLAYERS = 4;
 // Game field configuration
 export const MAP_SIZE = 500; // 1000x1000 tiles
 export const TILE_SIZE = 32; // 32px per tile
-export const GRID_SIZE = 5000; // Размер сетки 5000x5000
+export const GRID_SIZE = 50; // Total size in pixels
 
 // Game mechanics
 export const TANK_SPEED = 2; // pixels per frame

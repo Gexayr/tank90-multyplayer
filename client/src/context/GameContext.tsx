@@ -1,9 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { 
-  MAP_SIZE, 
-  TILE_SIZE,
-  POWER_UP_COUNT, 
-  WALL_COUNT,
+import {
+  POWER_UP_COUNT,
   POWER_UP_TYPES,
   WALL_TYPES,
   INITIAL_LIVES,
@@ -72,11 +69,11 @@ const isPositionOccupied = (
   return (
     walls.some(wall => wall.position.x === position.x && wall.position.y === position.y) ||
     tanks.some(tank => tank.position.x === position.x && tank.position.y === position.y) ||
-    powerUps.some(powerUp => powerUp.position.x === position.x && powerUp.position.y === position.y)    
+    powerUps.some(powerUp => powerUp.position.x === position.x && powerUp.position.y === position.y)
   );
 };
 
-const generateWalls = (count: number): Wall[] => {
+const generateWalls = (): Wall[] => {
     const walls: Wall[] = [];
     const levelGrid = generateLevel(1); // Use the level generator
 
@@ -104,7 +101,7 @@ const generateWalls = (count: number): Wall[] => {
 const generatePowerUps = (existingWalls: Wall[], existingPlayers: Player[], count: number): PowerUp[] => {
   const powerUps: PowerUp[] = [];
   const types = Object.values(POWER_UP_TYPES);
-  
+
   for (let i = 0; i < count; i++) {
     let position: Position;
     do {
@@ -178,7 +175,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       newPlayers.set(newPlayer.id, newPlayer);
 
       // Generate game elements
-      const initialWalls = generateWalls(WALL_COUNT);
+      const initialWalls = generateWalls();
       const initialPowerUps = generatePowerUps(initialWalls, Array.from(newPlayers.values()), POWER_UP_COUNT);
 
       // Assign random positions to all players
@@ -205,7 +202,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const startGame = useCallback(() => {
     setGameState((prev: GameState) => {
-      const initialWalls = generateWalls(WALL_COUNT);
+      const initialWalls = generateWalls();
       const initialPowerUps = generatePowerUps(initialWalls, Array.from(prev.players.values()), POWER_UP_COUNT);
 
       // Assign random positions to players on game start, avoiding walls and power-ups
@@ -233,7 +230,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // webSocketService.emit('startGame', { level: gameState.currentLevel }); // Emit event to server
   }, []);
 
-  const pauseGame = useCallback(() => {
+/*  const pauseGame = useCallback(() => {
     setGameState((prev: GameState) => ({ ...prev, isPaused: true }));
     // webSocketService.emit('pauseGame'); // Emit event to server
   }, []);
@@ -241,14 +238,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const resumeGame = useCallback(() => {
     setGameState((prev: GameState) => ({ ...prev, isPaused: false }));
     // webSocketService.emit('resumeGame'); // Emit event to server
-  }, []);
+  }, []);*/
 
-  const restartGame = useCallback(() => {
+/*  const restartGame = useCallback(() => {
     setGameState((prev: GameState) => ({
       ...prev,
       level: generateLevel(1), // Reset to level 1
-      walls: generateWalls(WALL_COUNT), // Regenerate walls
-      powerUps: generatePowerUps(generateWalls(WALL_COUNT), Array.from(prev.players.values()), POWER_UP_COUNT), // Regenerate power-ups
+      walls: generateWalls(), // Regenerate walls
+      powerUps: generatePowerUps(generateWalls(), Array.from(prev.players.values()), POWER_UP_COUNT), // Regenerate power-ups
       bullets: new Map<string, Bullet>(), // Clear bullets
       score: Object.fromEntries(Array.from(prev.players.keys()).map(id => [id, 0])), // Reset scores
       currentLevel: 1, // Reset level
@@ -256,7 +253,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isPaused: false
     }));
     // webSocketService.emit('restartGame'); // Emit event to server
-  }, []);
+  }, []);*/
 
   const movePlayer = useCallback((playerId: string, direction: Direction) => {
     setGameState((prev: GameState) => {
@@ -287,7 +284,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Check for collisions at each step if speed > 1
         if (isPositionOccupied(intermediatePosition, prev.walls, Array.from(prev.players.values()).filter((p: Player) => p.id !== playerId), prev.powerUps)) {
           // If collision, stop moving in this direction
-          break; 
+          break;
         } else {
             newPosition.x = intermediatePosition.x;
             newPosition.y = intermediatePosition.y;
@@ -337,7 +334,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               bulletPosition.x -= 1; // Start bullet 1 unit away from tank
               break;
       }
-      
+
       // Check if initial bullet position is occupied (e.g., inside a wall)
       if (isPositionOccupied(bulletPosition, prev.walls, Array.from(prev.players.values()), prev.powerUps)) {
           return prev; // Don't fire if the initial position is occupied
@@ -585,9 +582,9 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         showPlayerInput,
         addPlayer,
         startGame,
-        pauseGame,
-        resumeGame,
-        restartGame,
+        // pauseGame,
+        // resumeGame,
+        // restartGame,
         movePlayer,
         fireProjectile,
         togglePlayerInput: () => setShowPlayerInput((prev: boolean) => !prev)

@@ -1,7 +1,5 @@
 import React, { useEffect } from 'react';
 import { useGameContext } from '../context/GameContext';
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Target } from 'lucide-react';
-import { Direction } from '../types/gameTypes';
 
 const GameControls: React.FC = () => {
   const { 
