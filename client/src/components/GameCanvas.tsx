@@ -24,6 +24,7 @@ interface Tank {
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
+  const worldContainerRef = useRef<PIXI.Container | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
   const keysRef = useRef<{ [key: string]: boolean }>({});
@@ -33,6 +34,7 @@ const GameCanvas: React.FC = () => {
   const HEALTH_RESTORE_AMOUNT = 1; // Amount of health restored
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
+  const gridGraphicsRef = useRef<PIXI.Graphics | null>(null);
 
   // Create health bar for tank
   const createHealthBar = (tank: Tank) => {
@@ -40,8 +42,9 @@ const GameCanvas: React.FC = () => {
     healthBar.beginFill(0x00FF00);
     healthBar.drawRect(-20, -30, 40, 5);
     healthBar.endFill();
-    if (appRef.current) {
-      appRef.current.stage.addChild(healthBar);
+    if (worldContainerRef.current) {
+      worldContainerRef.current.addChild(healthBar);
+      // appRef.current.stage.addChild(healthBar);
     }
     return healthBar;
   };
@@ -55,9 +58,9 @@ const GameCanvas: React.FC = () => {
     pulse.x = x;
     pulse.y = y;
     
-    if (appRef.current) {
-      appRef.current.stage.addChild(pulse);
-      
+    if (worldContainerRef.current) {
+      worldContainerRef.current.addChild(pulse);
+
       // Animate pulse
       let scale = 1;
       const animatePulse = () => {
@@ -68,8 +71,8 @@ const GameCanvas: React.FC = () => {
         if (scale < 5) {
           requestAnimationFrame(animatePulse);
         } else {
-          if (appRef.current) {
-            appRef.current.stage.removeChild(pulse);
+          if (worldContainerRef.current) {
+            worldContainerRef.current.removeChild(pulse);
           }
         }
       };
@@ -127,8 +130,9 @@ const GameCanvas: React.FC = () => {
   // Handle bullet hit
   const handleBulletHit = (bullet: Bullet, tank: Tank) => {
     // Remove bullet
-    if (appRef.current) {
-      appRef.current.stage.removeChild(bullet.sprite);
+    if (worldContainerRef.current) {
+      // appRef.current.stage.removeChild(bullet.sprite);
+      worldContainerRef.current.removeChild(bullet.sprite);
       bulletsRef.current.delete(bullet.id);
     }
 
@@ -147,22 +151,24 @@ const GameCanvas: React.FC = () => {
     hitEffect.endFill();
     hitEffect.x = bullet.sprite.x;
     hitEffect.y = bullet.sprite.y;
-    if (appRef.current) {
-      appRef.current.stage.addChild(hitEffect);
-      
+    if (worldContainerRef.current) {
+      // appRef.current.stage.addChild(hitEffect);
+      worldContainerRef.current.addChild(hitEffect);
+
       // Remove hit effect after 100ms
       setTimeout(() => {
-        if (appRef.current) {
-          appRef.current.stage.removeChild(hitEffect);
+        if (worldContainerRef.current) {
+          // appRef.current.stage.removeChild(hitEffect);
+          worldContainerRef.current.removeChild(hitEffect);
         }
       }, 100);
     }
 
     // Check if tank is destroyed
     if (tank.health <= 0) {
-      if (appRef.current) {
-        appRef.current.stage.removeChild(tank.sprite);
-        appRef.current.stage.removeChild(tank.healthBar);
+      if (worldContainerRef.current) {
+        worldContainerRef.current.removeChild(tank.sprite);
+        worldContainerRef.current.removeChild(tank.healthBar);
         tanksRef.current.delete(tank.id);
       }
       // Add score to the player who destroyed the tank
@@ -196,6 +202,50 @@ const GameCanvas: React.FC = () => {
     }
   };
 
+// Функция для отрисовки сетки
+  const drawGrid = () => {
+    if (!appRef.current || !worldContainerRef.current || !gridGraphicsRef.current) return;
+
+    const app = appRef.current;
+    const worldContainer = worldContainerRef.current;
+    const gridGraphics = gridGraphicsRef.current;
+
+    gridGraphics.clear(); // Очищаем предыдущую отрисовку сетки
+    gridGraphics.lineStyle(1, 0x333333, 0.5); // Цвет и толщина линий сетки (темно-серый, полупрозрачный)
+
+    const gridSize = 100; // Размер одной ячейки сетки (например, 100x100 пикселей)
+
+    // Вычисляем видимую область (viewport) в мировых координатах
+    // Левый верхний угол видимой области мира относительно (0,0) мира
+    const viewPortWorldX = -worldContainer.x;
+    const viewPortWorldY = -worldContainer.y;
+
+    // Определяем границы видимой области в мировых координатах
+    const minX = Math.floor(viewPortWorldX / gridSize) * gridSize;
+    const maxX = Math.ceil((viewPortWorldX + app.screen.width) / gridSize) * gridSize;
+    const minY = Math.floor(viewPortWorldY / gridSize) * gridSize;
+    const maxY = Math.ceil((viewPortWorldY + app.screen.height) / gridSize) * gridSize;
+
+    // Рисуем вертикальные линии
+    for (let x = minX; x <= maxX; x += gridSize) {
+      gridGraphics.moveTo(x, minY);
+      gridGraphics.lineTo(x, maxY);
+    }
+
+    // Рисуем горизонтальные линии
+    for (let y = minY; y <= maxY; y += gridSize) {
+      gridGraphics.moveTo(minX, y);
+      gridGraphics.lineTo(maxX, y);
+    }
+  };
+
+
+
+  const lastGridXRef = useRef(0);
+  const lastGridYRef = useRef(0);
+  const GRID_REDRAW_THRESHOLD = 20;
+
+
   useEffect(() => {
     if (!canvasRef.current) return;
 
@@ -211,8 +261,18 @@ const GameCanvas: React.FC = () => {
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
     appRef.current = app;
 
+    const worldContainer = new PIXI.Container();
+    app.stage.addChild(worldContainer);
+    worldContainerRef.current = worldContainer;
+
+    const gridGraphics = new PIXI.Graphics();
+    worldContainer.addChild(gridGraphics);
+    gridGraphicsRef.current = gridGraphics;
+
     // Connect to WebSocket server
     wsService.connect();
+
+    drawGrid();
 
     // Create tank function
     const createTank = (id: string, x: number, y: number, color: number) => {
@@ -230,7 +290,7 @@ const GameCanvas: React.FC = () => {
       
       tank.x = x;
       tank.y = y;
-      app.stage.addChild(tank);
+      worldContainer.addChild(tank);
 
       const healthBar = createHealthBar({
         sprite: tank,
@@ -266,7 +326,7 @@ const GameCanvas: React.FC = () => {
       bullet.endFill();
       bullet.x = x;
       bullet.y = y;
-      app.stage.addChild(bullet);
+      worldContainer.addChild(bullet);
 
       bulletsRef.current.set(id, {
         sprite: bullet,
@@ -293,9 +353,9 @@ const GameCanvas: React.FC = () => {
     wsService.onPlayerLeave((playerId) => {
       const tank = tanksRef.current.get(playerId);
       if (tank) {
-        if (appRef.current) {
-          appRef.current.stage.removeChild(tank.sprite);
-          appRef.current.stage.removeChild(tank.healthBar);
+        if (worldContainerRef.current) {
+          worldContainerRef.current.removeChild(tank.sprite);
+          worldContainerRef.current.removeChild(tank.healthBar);
         }
         tanksRef.current.delete(playerId);
       }
@@ -378,43 +438,55 @@ const GameCanvas: React.FC = () => {
       const speed = 5;
       const rotationSpeed = 0.1;
 
+
       // Update local player
       const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-      if (localTank) {
-        if (keysRef.current['ArrowLeft']) {
-          localTank.rotation -= rotationSpeed;
-        }
-        if (keysRef.current['ArrowRight']) {
-          localTank.rotation += rotationSpeed;
-        }
-        if (keysRef.current['ArrowUp']) {
-          const direction = getDirectionFromRotation(localTank.rotation);
-          localTank.sprite.x += direction.x * speed;
-          localTank.sprite.y += direction.y * speed;
-        }
-        if (keysRef.current['ArrowDown']) {
-          const direction = getDirectionFromRotation(localTank.rotation);
-          localTank.sprite.x -= direction.x * speed;
-          localTank.sprite.y -= direction.y * speed;
-        }
-        localTank.sprite.rotation = localTank.rotation;
+      if (localTank && appRef.current && worldContainerRef.current) {
+          if (keysRef.current['ArrowLeft']) {
+            localTank.rotation -= rotationSpeed;
+          }
+          if (keysRef.current['ArrowRight']) {
+            localTank.rotation += rotationSpeed;
+          }
+          if (keysRef.current['ArrowUp']) {
+            const direction = getDirectionFromRotation(localTank.rotation);
+            localTank.sprite.x += direction.x * speed;
+            localTank.sprite.y += direction.y * speed;
+          }
+          if (keysRef.current['ArrowDown']) {
+            const direction = getDirectionFromRotation(localTank.rotation);
+            localTank.sprite.x -= direction.x * speed;
+            localTank.sprite.y -= direction.y * speed;
+          }
+          localTank.sprite.rotation = localTank.rotation;
 
-        // Keep tank within canvas bounds
-        localTank.sprite.x = Math.max(20, Math.min(localTank.sprite.x, app.screen.width - 20));
-        localTank.sprite.y = Math.max(20, Math.min(localTank.sprite.y, app.screen.height - 20));
+          // Keep tank within canvas bounds
+          localTank.sprite.x = Math.max(20, Math.min(localTank.sprite.x, app.screen.width - 20));
+          localTank.sprite.y = Math.max(20, Math.min(localTank.sprite.y, app.screen.height - 20));
 
-        // Try to restore health
-        tryRestoreHealth(localTank);
+          // Try to restore health
+          tryRestoreHealth(localTank);
 
-        // Update health bar position
-        updateHealthBar(localTank);
+          // Update health bar position
+          updateHealthBar(localTank);
 
-        // Send position update to server
-        wsService.sendPlayerMove(
-          localTank.sprite.x,
-          localTank.sprite.y,
-          localTank.rotation
-        );
+          // Send position update to server
+          wsService.sendPlayerMove(
+            localTank.sprite.x,
+            localTank.sprite.y,
+            localTank.rotation
+          );
+        worldContainerRef.current.x = appRef.current.screen.width / 2 - localTank.sprite.x;
+        worldContainerRef.current.y = appRef.current.screen.height / 2 - localTank.sprite.y;
+
+        if (
+            Math.abs(worldContainerRef.current.x - lastGridXRef.current) > GRID_REDRAW_THRESHOLD ||
+            Math.abs(worldContainerRef.current.y - lastGridYRef.current) > GRID_REDRAW_THRESHOLD
+        ) {
+          drawGrid();
+          lastGridXRef.current = worldContainerRef.current.x;
+          lastGridYRef.current = worldContainerRef.current.y;
+        }
       }
 
       // Update other tanks' health bars
