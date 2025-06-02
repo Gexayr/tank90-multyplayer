@@ -24,7 +24,6 @@ interface Tank {
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
-  const worldContainerRef = useRef<PIXI.Container | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
   const keysRef = useRef<{ [key: string]: boolean }>({});
@@ -34,7 +33,10 @@ const GameCanvas: React.FC = () => {
   const HEALTH_RESTORE_AMOUNT = 1; // Amount of health restored
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
+  const worldContainerRef = useRef<PIXI.Container | null>(null);
   const gridGraphicsRef = useRef<PIXI.Graphics | null>(null);
+  const minimapGraphicsRef = useRef<PIXI.Graphics | null>(null);
+  const minimapAppRef = useRef<PIXI.Application | null>(null);
 
   // Create health bar for tank
   const createHealthBar = (tank: Tank) => {
@@ -244,7 +246,66 @@ const GameCanvas: React.FC = () => {
   const lastGridXRef = useRef(0);
   const lastGridYRef = useRef(0);
   const GRID_REDRAW_THRESHOLD = 20;
+  const WORLD_SIZE = 5000;
+  const MINIMAP_SIZE = 200;
 
+  const drawMinimap = () => {
+    if (!appRef.current || !worldContainerRef.current || !minimapGraphicsRef.current) return;
+
+    const localTank = tanksRef.current.get(wsService.getSocketId() || '');
+    if (!localTank) return;
+
+    const minimapGraphics = minimapGraphicsRef.current;
+    minimapGraphics.clear();
+
+    // 1. Рисуем фон (опционально, если хотите сетку на миникарте)
+    // minimapGraphics.beginFill(0x000000, 0.2); // Можно добавить полупрозрачный фон
+    // minimapGraphics.drawRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    // minimapGraphics.endFill();
+
+    // 2. Рассчитываем масштаб миникарты
+    const scaleX = MINIMAP_SIZE / WORLD_SIZE;
+    const scaleY = MINIMAP_SIZE / WORLD_SIZE;
+
+    // 3. Рисуем границы всего игрового мира на миникарте (если мир имеет границы)
+    minimapGraphics.lineStyle(1, 0xAAAAAA, 0.7);
+    minimapGraphics.drawRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE); // Границы миникарты = границы мира
+
+    // 4. Отображаем позиции других игроков на миникарте
+    tanksRef.current.forEach(tank => {
+      // Преобразуем мировые координаты танка в координаты миникарты
+      const minimapX = (tank.sprite.x + WORLD_SIZE / 2) * scaleX;
+      const minimapY = (tank.sprite.y + WORLD_SIZE / 2) * scaleY;
+
+      minimapGraphics.beginFill(0xFFFFFF); // Белый цвет для других танков
+      if (tank.id === localTank.id) {
+        minimapGraphics.beginFill(0x00FF00); // Зеленый для вашего танка
+      }
+      minimapGraphics.drawCircle(minimapX, minimapY, 2); // Маленькая точка для танка
+      minimapGraphics.endFill();
+    });
+
+    // 5. Отображаем видимую область (viewport) на миникарте
+    // Сначала вычислим видимую область в мировых координатах
+    const viewPortWorldX = -worldContainerRef.current.x;
+    const viewPortWorldY = -worldContainerRef.current.y;
+    const viewPortWidth = appRef.current.screen.width;
+    const viewPortHeight = appRef.current.screen.height;
+
+    // Преобразуем координаты видимой области в координаты миникарты
+    const minimapViewPortX = (viewPortWorldX + WORLD_SIZE / 2) * scaleX;
+    const minimapViewPortY = (viewPortWorldY + WORLD_SIZE / 2) * scaleY;
+    const minimapViewPortWidth = viewPortWidth * scaleX;
+    const minimapViewPortHeight = viewPortHeight * scaleY;
+
+    minimapGraphics.lineStyle(1, 0x0000FF, 0.8); // Синяя рамка для видимой области
+    minimapGraphics.drawRect(
+        minimapViewPortX,
+        minimapViewPortY,
+        minimapViewPortWidth,
+        minimapViewPortHeight
+    );
+  };
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -520,6 +581,8 @@ const GameCanvas: React.FC = () => {
           bulletsRef.current.delete(bulletId);
         }
       });
+
+      drawMinimap();
     };
 
     // Add game loop to PIXI ticker
@@ -532,6 +595,12 @@ const GameCanvas: React.FC = () => {
       app.ticker.remove(gameLoop);
       wsService.disconnect();
       app.destroy(true, true);
+
+      if (minimapAppRef.current) {
+        minimapAppRef.current.destroy(true, true);
+        minimapAppRef.current = null;
+      }
+      minimapGraphicsRef.current = null;
     };
   }, []);
 
@@ -557,6 +626,38 @@ const GameCanvas: React.FC = () => {
       }}>
         Score: {localScore}
       </div>
+      <div
+          id="minimap-container" // Добавим ID для стилей
+          style={{
+            position: 'absolute',
+            top: '10px',      // Позиция от верхнего края
+            right: '10px',    // Позиция от правого края
+            width: '200px',   // Ширина миникарты
+            height: '200px',  // Высота миникарты
+            backgroundColor: 'rgba(0, 0, 0, 0.5)', // Полупрозрачный фон
+            border: '1px solid #777', // Рамка
+            overflow: 'hidden', // Скрываем все, что выходит за рамки
+            zIndex: 10, // Чтобы миникарта была поверх всего
+            borderRadius: '5px' // Небольшое скругление углов
+          }}
+          ref={(el) => {
+            if (el && !minimapAppRef.current) { // Проверяем appRef.current, а не graphicsRef.current
+              const minimapApp = new PIXI.Application({
+                width: MINIMAP_SIZE, // Используем константы
+                height: MINIMAP_SIZE,
+                transparent: true,
+                resolution: window.devicePixelRatio || 1,
+                antialias: true
+              });
+              el.appendChild(minimapApp.view as HTMLCanvasElement);
+              minimapAppRef.current = minimapApp; // Сохраняем ссылку на PIXI.Application миникарты
+
+              const minimapGraphics = new PIXI.Graphics();
+              minimapApp.stage.addChild(minimapGraphics);
+              minimapGraphicsRef.current = minimapGraphics;
+            }
+          }}
+      />
     </div>
   );
 };
