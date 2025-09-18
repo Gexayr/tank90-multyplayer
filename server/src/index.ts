@@ -3,7 +3,9 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import mongoose from 'mongoose';
 import cors from 'cors';
+import Score from './models/Score';
 import dotenv from 'dotenv';
+import { Game } from './game/Game';
 
 dotenv.config();
 
@@ -22,31 +24,6 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:27017/tank90';
 
-// Game state
-interface Player {
-  id: string;
-  x: number;
-  y: number;
-  rotation: number;
-  color: number;
-  health: number;
-}
-
-interface Bullet {
-  id: string;
-  playerId: string;
-  x: number;
-  y: number;
-  direction: { x: number; y: number };
-}
-
-const gameState = {
-  players: new Map<string, Player>(),
-  bullets: new Map<string, Bullet>(),
-  nextPlayerColor: 0xFFFF00, // Start with yellow
-  colors: [0xFFFF00, 0x0000FF, 0xFF0000, 0x00FF00, 0xFF00FF, 0x00FFFF] // Available colors
-};
-
 // Connect to MongoDB
 mongoose.connect(MONGO_URI)
   .then(() => console.log('Connected to MongoDB'))
@@ -57,91 +34,75 @@ app.get('/', (req, res) => {
   res.json({ message: 'Tank 90 Backend API' });
 });
 
+// Leaderboard route
+app.get('/leaderboard', async (req, res) => {
+  try {
+    const scores = await Score.find().sort({ score: -1 }).limit(10);
+    res.json(scores);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching leaderboard' });
+  }
+});
+
+const game = new Game();
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  // Assign a color to the new player
-  const color = gameState.colors[gameState.nextPlayerColor % gameState.colors.length];
-  gameState.nextPlayerColor++;
-
-  // Create new player
-  const player: Player = {
-    id: socket.id,
-    x: Math.random() * 700 + 50, // Random position
-    y: Math.random() * 500 + 50,
-    rotation: 0,
-    color,
-    health: 100
-  };
-
-  // Add player to game state
-  gameState.players.set(socket.id, player);
+  const player = game.addPlayer(socket.id);
 
   // Send current game state to the new player
-  socket.emit('game-state', {
-    players: Array.from(gameState.players.values()),
-    bullets: Array.from(gameState.bullets.values())
-  });
+  socket.emit('game-state', game.getGameState());
 
   // Notify other players about the new player
   socket.broadcast.emit('player-join', player);
 
   // Handle player movement
-  socket.on('player-move', (data: { x: number; y: number; rotation: number }) => {
-    const player = gameState.players.get(socket.id);
+  socket.on('player-move', (data: { x: number; y: number; rotation: number, direction?: 'forward' | 'backward' }) => {
+    game.movePlayer(socket.id, data.x, data.y, data.rotation, data.direction);
+    const player = game.getGameState().players.find(p => p.id === socket.id);
     if (player) {
-      player.x = data.x;
-      player.y = data.y;
-      player.rotation = data.rotation;
-      socket.broadcast.emit('player-move', {
+      io.emit('player-move', {
         id: socket.id,
-        x: data.x,
-        y: data.y,
-        rotation: data.rotation
-      });
-    }
-  });
-
-  // Handle health updates
-  socket.on('health-update', (data: { id: string; health: number }) => {
-    const player = gameState.players.get(data.id);
-    if (player) {
-      player.health = data.health;
-      socket.broadcast.emit('health-update', {
-        id: data.id,
-        health: data.health
+        x: player.x,
+        y: player.y,
+        rotation: player.rotation
       });
     }
   });
 
   // Handle player shooting
   socket.on('player-shoot', (data: { x: number; y: number; direction: { x: number; y: number } }) => {
-    const bullet: Bullet = {
-      id: `${socket.id}-${Date.now()}`,
-      playerId: socket.id,
-      x: data.x,
-      y: data.y,
-      direction: data.direction
-    };
-
-    gameState.bullets.set(bullet.id, bullet);
+    const bullet = game.createBullet(socket.id, data.x, data.y, data.direction);
     io.emit('bullet-create', bullet);
-
-    // Remove bullet after 2 seconds
-    setTimeout(() => {
-      gameState.bullets.delete(bullet.id);
-      io.emit('bullet-remove', bullet.id);
-    }, 2000);
   });
 
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    gameState.players.delete(socket.id);
+    game.removePlayer(socket.id);
     io.emit('player-leave', socket.id);
   });
 });
+
+// Game event handling
+game.on('bullet-removed', (bulletId) => {
+  io.emit('bullet-remove', bulletId);
+});
+
+game.on('health-update', (data) => {
+  io.emit('health-update', data);
+});
+
+game.on('score-update', (data) => {
+  io.emit('score-update', data);
+});
+
+game.on('player-removed', (playerId) => {
+  io.emit('player-leave', playerId);
+});
+
 
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -39,9 +39,9 @@ class WebSocketService {
   }
 
   // Player movement
-  sendPlayerMove(x: number, y: number, rotation: number) {
+  sendPlayerMove(x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
     if (this.socket) {
-      this.socket.emit('player-move', { x, y, rotation });
+      this.socket.emit('player-move', { x, y, rotation, direction });
     }
   }
 
@@ -107,6 +107,18 @@ class WebSocketService {
   onBulletCreate(callback: (bullet: any) => void) {
     if (this.socket) {
       this.socket.on('bullet-create', callback);
+    }
+  }
+
+  onBulletRemove(callback: (bulletId: string) => void) {
+    if (this.socket) {
+      this.socket.on('bullet-remove', callback);
+    }
+  }
+
+  onScoreUpdate(callback: (data: { playerId: string; score: number }) => void) {
+    if (this.socket) {
+      this.socket.on('score-update', callback);
     }
   }
 
