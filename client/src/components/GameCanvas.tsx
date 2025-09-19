@@ -6,6 +6,8 @@ interface Bullet {
   sprite: PIXI.Graphics;
   id: string;
   playerId: string;
+  direction: { x: number; y: number };
+  speed: number;
 }
 
 interface Tank {
@@ -16,6 +18,7 @@ interface Tank {
   maxHealth: number;
   healthBar: PIXI.Graphics;
   score: number;
+  color: number;
 }
 
 const GameCanvas: React.FC = () => {
@@ -96,6 +99,8 @@ const GameCanvas: React.FC = () => {
       tank.y = y;
       // Ensure tank draws above health bar
       tank.zIndex = 1;
+      // Set tint to match the player's color for consistency
+      tank.tint = color;
       app.stage.addChild(tank);
 
       const newTank: Tank = {
@@ -106,6 +111,7 @@ const GameCanvas: React.FC = () => {
         maxHealth: 100,
         healthBar: new PIXI.Graphics(),
         score,
+        color,
       };
       newTank.healthBar = createHealthBar(newTank);
 
@@ -114,7 +120,7 @@ const GameCanvas: React.FC = () => {
     };
 
     // Create bullet function
-    const createBullet = (id: string, x: number, y: number, color: number, playerId: string) => {
+    const createBullet = (id: string, x: number, y: number, color: number, playerId: string, direction: { x: number; y: number }, speed: number) => {
       const bullet = new PIXI.Graphics();
       bullet.beginFill(color);
       bullet.drawCircle(0, 0, 4);
@@ -127,6 +133,8 @@ const GameCanvas: React.FC = () => {
         sprite: bullet,
         id,
         playerId,
+        direction,
+        speed,
       });
     };
 
@@ -176,8 +184,8 @@ const GameCanvas: React.FC = () => {
         if (!bulletsRef.current.has(bullet.id)) {
           const tank = tanksRef.current.get(bullet.playerId);
           if (tank) {
-            const color = PIXI.utils.shared.getColor(tank.sprite.tint);
-            createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId);
+            const color = 0xFFFFFF;
+            createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
           }
         }
       });
@@ -186,8 +194,8 @@ const GameCanvas: React.FC = () => {
     wsService.onBulletCreate((bullet) => {
       const tank = tanksRef.current.get(bullet.playerId);
       if (tank) {
-        const color = PIXI.utils.shared.getColor(tank.sprite.tint);
-        createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId);
+        const color = 0xFFFFFF;
+        createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
       }
     });
 
@@ -270,6 +278,12 @@ const GameCanvas: React.FC = () => {
             wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation, keysRef.current['ArrowUp'] ? 'forward' : 'backward');
         }
       }
+
+      // Advance bullets locally so their movement is visible between server events
+      bulletsRef.current.forEach((b) => {
+        b.sprite.x += b.direction.x * b.speed;
+        b.sprite.y += b.direction.y * b.speed;
+      });
     };
 
     // Add game loop to PIXI ticker
