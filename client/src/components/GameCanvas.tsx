@@ -19,6 +19,7 @@ interface Tank {
   healthBar: PIXI.Graphics;
   score: number;
   color: number;
+  highlight?: PIXI.Graphics;
 }
 
 const GameCanvas: React.FC = () => {
@@ -78,8 +79,51 @@ const GameCanvas: React.FC = () => {
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
     appRef.current = app;
 
+    // Draw background grid
+    const grid = new PIXI.Graphics();
+    const gridSize = 40; // size of each cell
+    grid.lineStyle(1, 0x444444, 0.4);
+    for (let x = 0; x <= app.view.width; x += gridSize) {
+      grid.moveTo(x + 0.5, 0);
+      grid.lineTo(x + 0.5, app.view.height);
+    }
+    for (let y = 0; y <= app.view.height; y += gridSize) {
+      grid.moveTo(0, y + 0.5);
+      grid.lineTo(app.view.width, y + 0.5);
+    }
+    grid.zIndex = -10; // behind everything
+    app.stage.addChild(grid);
+
     // Connect to WebSocket server
     wsService.connect();
+
+    // Helper to create or remove highlight for local tank
+    const ensureHighlightState = (tank: Tank) => {
+      const localId = wsService.getSocketId();
+      const isLocal = localId && tank.id === localId;
+      if (isLocal) {
+        if (!tank.highlight && appRef.current) {
+          const hl = new PIXI.Graphics();
+          hl.lineStyle(0.8, 0xffff00, 0.5);
+          hl.drawRoundedRect(-23, -23, 46, 46, 8);
+          hl.zIndex = 0.75; // between health bar and tank
+          appRef.current.stage.addChild(hl);
+          tank.highlight = hl;
+        }
+      } else {
+        if (tank.highlight && appRef.current) {
+          appRef.current.stage.removeChild(tank.highlight);
+          tank.highlight.destroy();
+          delete tank.highlight;
+        }
+      }
+      // Sync position if exists
+      if (tank.highlight) {
+        tank.highlight.x = tank.sprite.x;
+        tank.highlight.y = tank.sprite.y;
+        tank.highlight.rotation = tank.sprite.rotation;
+      }
+    };
 
     // Create tank function
     const createTank = (id: string, x: number, y: number, color: number, health: number, score: number) => {
@@ -115,6 +159,7 @@ const GameCanvas: React.FC = () => {
 
       tanksRef.current.set(id, newTank);
       updateHealthBar(newTank);
+      ensureHighlightState(newTank);
     };
 
     // Create bullet function
@@ -154,6 +199,10 @@ const GameCanvas: React.FC = () => {
       if (tank && appRef.current) {
         appRef.current.stage.removeChild(tank.sprite);
         appRef.current.stage.removeChild(tank.healthBar);
+        if (tank.highlight) {
+          appRef.current.stage.removeChild(tank.highlight);
+          tank.highlight.destroy();
+        }
         tanksRef.current.delete(playerId);
       }
     });
@@ -166,6 +215,7 @@ const GameCanvas: React.FC = () => {
         tank.rotation = data.rotation;
         tank.sprite.rotation = data.rotation;
         updateHealthBar(tank);
+        ensureHighlightState(tank);
       }
     });
 
@@ -174,6 +224,9 @@ const GameCanvas: React.FC = () => {
       state.players.forEach((player: any) => {
         if (!tanksRef.current.has(player.id)) {
           createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+        } else {
+          const t = tanksRef.current.get(player.id)!;
+          ensureHighlightState(t);
         }
       });
 
@@ -277,6 +330,9 @@ const GameCanvas: React.FC = () => {
         }
       }
 
+      // Keep highlight synced (in case socket id becomes available later)
+      tanksRef.current.forEach((t) => ensureHighlightState(t));
+
       // Advance bullets locally so their movement is visible between server events
       bulletsRef.current.forEach((b) => {
         b.sprite.x += b.direction.x * b.speed;
@@ -294,6 +350,12 @@ const GameCanvas: React.FC = () => {
       app.ticker.remove(gameLoop);
       wsService.disconnect();
       if (appRef.current) {
+        // Clean up all tank-related graphics
+        tanksRef.current.forEach((t) => {
+          if (t.highlight) t.highlight.destroy();
+          t.healthBar.destroy();
+          t.sprite.destroy();
+        });
         appRef.current.destroy(true, true);
       }
     };
