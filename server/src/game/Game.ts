@@ -169,6 +169,20 @@ export class Game extends EventEmitter {
         }
       });
     });
+
+    // Health regeneration: fully recover in ~40 seconds
+    // Regen per tick (60 FPS): 100 HP / (40s * 60fps) = 0.041666... HP per tick
+    const REGEN_PER_TICK = 100 / (40 * 60);
+    this.players.forEach((player) => {
+      if (player.health > 0 && player.health < 100) {
+        const before = player.health;
+        player.health = Math.min(100, player.health + REGEN_PER_TICK);
+        // Emit only when integer value changes to reduce network traffic
+        if (Math.floor(player.health) !== Math.floor(before) || player.health === 100) {
+          this.emit('health-update', { id: player.id, health: Math.round(player.health) });
+        }
+      }
+    });
   }
 
   private async saveScore(playerId: string, score: number) {

@@ -13,7 +13,7 @@ const App: React.FC = () => {
       minHeight: '100vh',
       color: 'white'
     }}>
-      <h1 style={{ marginBottom: '20px' }}>Tank 90</h1>
+      <h1 style={{ marginBottom: '20px' }}>Tank 90 Multiplayer</h1>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start' }}>
         <GameCanvas />
         <Leaderboard />
