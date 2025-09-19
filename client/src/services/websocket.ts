@@ -16,8 +16,10 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
+    // Prefer polling first to work around reverse proxies/CDNs that do not pass WebSocket upgrades.
+    // Socket.IO will attempt to upgrade to WebSocket when possible.
     this.socket = io(this.SERVER_URL, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       withCredentials: false,
     });
 

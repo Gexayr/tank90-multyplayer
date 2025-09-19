@@ -173,3 +173,31 @@ MIT License
 ## 📞 Contact
 
 For collaboration or issues, reach out to the development team at [your-email@example.com].
+
+
+## Notes on WebSocket connectivity behind reverse proxies
+
+If you see errors like `Connection error: websocket error` or browser logs showing that a WebSocket connection to `/socket.io/?EIO=4&transport=websocket` failed, your reverse proxy (e.g., NGINX) might not be configured to pass WebSocket upgrade headers.
+
+This project configures the client to prefer HTTP long-polling first and then upgrade to WebSocket when the environment allows it. This ensures the app still works in environments where WebSocket upgrades are blocked.
+
+To enable WebSocket upgrades through NGINX, ensure your site config includes:
+
+```
+location /socket.io/ {
+  proxy_pass http://server:3000; # adjust upstream
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_set_header Host $host;
+  proxy_read_timeout 600s;
+}
+```
+
+Environment configuration:
+- FRONT_URI should list allowed front-end origins (comma-separated). Example:
+  `FRONT_URI=https://tank.amsoft.am,http://localhost:5173`
+- VITE_SERVER_URL should point to your backend base URL that serves Socket.IO. Example:
+  `VITE_SERVER_URL=https://tank-back.amsoft.am`
+
+With these settings, polling will connect even if WebSockets are blocked, and will upgrade to WebSockets automatically when the proxy is correctly configured.
