@@ -27,11 +27,19 @@ const GameCanvas: React.FC = () => {
   const appRef = useRef<PIXI.Application | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
+  const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef<{ [key: string]: boolean }>({});
   const lastShotTimeRef = useRef<number>(0);
   const SHOT_COOLDOWN = 500; // milliseconds between shots
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
+  // Minimap configuration
+  const MINIMAP_WIDTH = 160; // 20% of 800
+  const MINIMAP_HEIGHT = 120; // 20% of 600
+  const WORLD_WIDTH = 800;
+  const WORLD_HEIGHT = 600;
+  const MINIMAP_SCALE_X = MINIMAP_WIDTH / WORLD_WIDTH;
+  const MINIMAP_SCALE_Y = MINIMAP_HEIGHT / WORLD_HEIGHT;
 
   // Create health bar for tank
   const createHealthBar = (tank: Tank) => {
@@ -96,6 +104,82 @@ const GameCanvas: React.FC = () => {
 
     // Connect to WebSocket server
     wsService.connect();
+
+    // Minimap drawing (HTML canvas overlay)
+    const drawMinimap = () => {
+      const canvas = minimapRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Resize in case CSS changed pixel ratio
+      if (canvas.width !== MINIMAP_WIDTH || canvas.height !== MINIMAP_HEIGHT) {
+        canvas.width = MINIMAP_WIDTH;
+        canvas.height = MINIMAP_HEIGHT;
+      }
+
+      // Clear
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background (semi-transparent dark)
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid (optional, very light)
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      const cellX = 40 * MINIMAP_SCALE_X;
+      const cellY = 40 * MINIMAP_SCALE_Y;
+      for (let x = 0; x <= canvas.width; x += cellX) {
+        ctx.beginPath();
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= canvas.height; y += cellY) {
+        ctx.beginPath();
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(canvas.width, y + 0.5);
+        ctx.stroke();
+      }
+
+      // Draw players
+      tanksRef.current.forEach((t) => {
+        const x = t.sprite.x * MINIMAP_SCALE_X;
+        const y = t.sprite.y * MINIMAP_SCALE_Y;
+        const isLocal = wsService.getSocketId() && t.id === wsService.getSocketId();
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(t.rotation);
+        // body
+        ctx.fillStyle = `#${t.color.toString(16).padStart(6,'0')}`;
+        ctx.fillRect(-3, -3, 6, 6);
+        // direction tip
+        ctx.fillStyle = isLocal ? 'rgba(255,255,0,0.9)' : 'rgba(255,0,0,0.9)';
+        ctx.beginPath();
+        ctx.moveTo(0, -6);
+        ctx.lineTo(-2, -2);
+        ctx.lineTo(2, -2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // Draw bullets
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      bulletsRef.current.forEach((b) => {
+        const x = b.sprite.x * MINIMAP_SCALE_X;
+        const y = b.sprite.y * MINIMAP_SCALE_Y;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Border
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+    };
 
     // Helper to create or remove highlight for local tank
     const ensureHighlightState = (tank: Tank) => {
@@ -338,6 +422,9 @@ const GameCanvas: React.FC = () => {
         b.sprite.x += b.direction.x * b.speed;
         b.sprite.y += b.direction.y * b.speed;
       });
+
+      // Draw minimap overlay
+      drawMinimap();
     };
 
     // Add game loop to PIXI ticker
@@ -385,6 +472,22 @@ const GameCanvas: React.FC = () => {
       >
         Score: {localScore}
       </div>
+      <canvas
+        ref={minimapRef}
+        style={{
+          position: 'fixed',
+          right: '10px',
+          bottom: '10px',
+          width: MINIMAP_WIDTH,
+          height: MINIMAP_HEIGHT,
+          opacity: 0.8,
+          pointerEvents: 'none',
+          zIndex: 1000,
+          border: '1px solid rgba(255,255,255,0.2)',
+          borderRadius: '4px',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
+        }}
+      />
     </div>
   );
 };
