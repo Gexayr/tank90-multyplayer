@@ -33,10 +33,12 @@ const GameCanvas: React.FC = () => {
   const createHealthBar = (tank: Tank) => {
     const healthBar = new PIXI.Graphics();
     healthBar.beginFill(0x00ff00);
-    healthBar.drawRect(-20, -30, 40, 5);
+    healthBar.drawRect(-20, 30, 40, 5);
     healthBar.endFill();
     if (appRef.current) {
       appRef.current.stage.addChild(healthBar);
+      // Ensure health bar is drawn behind the tank
+      healthBar.zIndex = 0;
     }
     return healthBar;
   };
@@ -46,7 +48,7 @@ const GameCanvas: React.FC = () => {
     const healthPercentage = tank.health / tank.maxHealth;
     tank.healthBar.clear();
     tank.healthBar.beginFill(0x00ff00);
-    tank.healthBar.drawRect(-20, -30, 40 * healthPercentage, 5);
+    tank.healthBar.drawRect(-20, 30, 40 * healthPercentage, 5);
     tank.healthBar.endFill();
 
     // Update position
@@ -65,6 +67,9 @@ const GameCanvas: React.FC = () => {
       backgroundColor: 0x000000,
       resolution: window.devicePixelRatio || 1,
     });
+
+    // Ensure we can control draw order via zIndex
+    app.stage.sortableChildren = true;
 
     // Add canvas to DOM
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
@@ -89,6 +94,8 @@ const GameCanvas: React.FC = () => {
       
       tank.x = x;
       tank.y = y;
+      // Ensure tank draws above health bar
+      tank.zIndex = 1;
       app.stage.addChild(tank);
 
       const newTank: Tank = {

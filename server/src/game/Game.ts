@@ -58,20 +58,55 @@ export class Game extends EventEmitter {
     if (player) {
       player.rotation = rotation;
       const speed = 5;
+
+      // If direction provided, compute proposed movement server-side
       if (direction) {
         const dirX = Math.sin(rotation);
         const dirY = -Math.cos(rotation);
+
+        // Save original position
+        const originalX = player.x;
+        const originalY = player.y;
+
+        // Compute proposed new position
+        let proposedX = player.x;
+        let proposedY = player.y;
         if (direction === 'forward') {
-          player.x += dirX * speed;
-          player.y += dirY * speed;
+          proposedX += dirX * speed;
+          proposedY += dirY * speed;
         } else {
-          player.x -= dirX * speed;
-          player.y -= dirY * speed;
+          proposedX -= dirX * speed;
+          proposedY -= dirY * speed;
         }
-        // Keep player within bounds
-        player.x = Math.max(20, Math.min(player.x, 780));
-        player.y = Math.max(20, Math.min(player.y, 580));
+
+        // Keep within bounds first
+        proposedX = Math.max(20, Math.min(proposedX, 780));
+        proposedY = Math.max(20, Math.min(proposedY, 580));
+
+        // Tank-tank collision: prevent overlapping with other players (circle approx, radius 20)
+        const minDistance = 40; // two radii
+        let collides = false;
+        this.players.forEach((other) => {
+          if (other.id !== id && !collides) {
+            const dx = other.x - proposedX;
+            const dy = other.y - proposedY;
+            const dist = Math.hypot(dx, dy);
+            if (dist < minDistance) {
+              collides = true;
+            }
+          }
+        });
+
+        if (!collides) {
+          player.x = proposedX;
+          player.y = proposedY;
+        } else {
+          // Reject movement; keep original position
+          player.x = originalX;
+          player.y = originalY;
+        }
       } else {
+        // No directional intent: accept provided position (used for rotation-only updates)
         player.x = x;
         player.y = y;
       }
