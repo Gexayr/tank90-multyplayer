@@ -99,8 +99,6 @@ const GameCanvas: React.FC = () => {
       tank.y = y;
       // Ensure tank draws above health bar
       tank.zIndex = 1;
-      // Set tint to match the player's color for consistency
-      tank.tint = color;
       app.stage.addChild(tank);
 
       const newTank: Tank = {
