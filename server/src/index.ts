@@ -10,15 +10,28 @@ import { Game } from './game/Game';
 dotenv.config();
 
 const app = express();
+
+// Build allowed origins list from env (comma-separated) or allow any origin by default
+const allowedOriginsEnv = process.env.FRONT_URI;
+const allowedOrigins = allowedOriginsEnv
+  ? allowedOriginsEnv.split(',').map((s) => s.trim())
+  : true; // reflect request origin
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONT_URI || "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+  },
 });
 
-app.use(cors());
+// Apply CORS to HTTP routes as well
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
@@ -103,7 +116,6 @@ game.on('player-removed', (playerId) => {
   io.emit('player-leave', playerId);
 });
 
-
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-}); 
+});

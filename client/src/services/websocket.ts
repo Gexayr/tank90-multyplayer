@@ -16,7 +16,10 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
-    this.socket = io(this.SERVER_URL);
+    this.socket = io(this.SERVER_URL, {
+      transports: ['websocket', 'polling'],
+      withCredentials: false,
+    });
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
