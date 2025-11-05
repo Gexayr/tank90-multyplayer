@@ -47,6 +47,7 @@ type PlayerState = {
 };
 
 const players: Record<string, PlayerState> = {};
+const deadPlayers: Set<string> = new Set();
 
 // Configurable tick rate
 const BROADCAST_INTERVAL_MS = Number(process.env.BROADCAST_INTERVAL_MS || 100); // 10Hz
@@ -58,15 +59,23 @@ io.on('connection', (socket) => {
     socket.on('player-join', (payload: { id?: string; x?: number; y?: number; rotation?: number }) => {
         const id = payload?.id || socket.id;
         const now = Date.now();
+        // Random spawn within world bounds (match client 800x600), keep margin for tank size
+        const WORLD_WIDTH = 800;
+        const WORLD_HEIGHT = 600;
+        const MARGIN = 20;
+        const randX = Math.floor(Math.random() * (WORLD_WIDTH - 2 * MARGIN)) + MARGIN;
+        const randY = Math.floor(Math.random() * (WORLD_HEIGHT - 2 * MARGIN)) + MARGIN;
+
         players[socket.id] = {
             id,
-            x: payload?.x ?? 0,
-            y: payload?.y ?? 0,
+            x: payload?.x ?? randX,
+            y: payload?.y ?? randY,
             rotation: payload?.rotation ?? 0,
             lastUpdate: now,
             lastMoveReceived: 0
         };
         socket.join('game');
+        deadPlayers.delete(socket.id);
 
         // Send initial state to new player
         socket.emit('joined', {
@@ -91,20 +100,63 @@ io.on('connection', (socket) => {
         console.log(`player-join ${id} (${socket.id})`);
     });
 
-    socket.on('player-move', (data: { x: number; y: number; rotation: number; direction?: string }) => {
+    // Allow dead player to restart and respawn
+    socket.on('restart', () => {
+        const now2 = Date.now();
+        const WORLD_WIDTH2 = 800;
+        const WORLD_HEIGHT2 = 600;
+        const MARGIN2 = 20;
+        const randX2 = Math.floor(Math.random() * (WORLD_WIDTH2 - 2 * MARGIN2)) + MARGIN2;
+        const randY2 = Math.floor(Math.random() * (WORLD_HEIGHT2 - 2 * MARGIN2)) + MARGIN2;
+
+        const id2 = socket.id; // logical id equals socket
+        // Re-add player state
+        players[socket.id] = {
+            id: id2,
+            x: randX2,
+            y: randY2,
+            rotation: 0,
+            lastUpdate: now2,
+            lastMoveReceived: 0,
+        };
+        deadPlayers.delete(socket.id);
+        socket.join('game');
+
+        // Send snapshot to restarting player
+        socket.emit('joined', {
+            id: id2,
+            serverTime: now2,
+            players: Object.values(players).map(p => ({
+                id: p.id,
+                x: p.x,
+                y: p.y,
+                rotation: p.rotation
+            }))
+        });
+
+        // Notify others of new spawn
+        socket.to('game').emit('player-join', {
+            id: id2,
+            x: players[socket.id].x,
+            y: players[socket.id].y,
+            rotation: players[socket.id].rotation,
+        });
+    });
+
+    // Tank dimensions (AABB) for collision
+        const TANK_HALF = 20;
+
+        socket.on('player-move', (data: { x: number; y: number; rotation: number; direction?: string }) => {
         const state = players[socket.id];
         const now = Date.now();
 
         if (!state) {
-            // Create state if doesn't exist
-            players[socket.id] = {
-                id: socket.id,
-                x: data.x,
-                y: data.y,
-                rotation: data.rotation,
-                lastUpdate: now,
-                lastMoveReceived: now
-            };
+            // If player has not joined or is dead, ignore moves
+            return;
+        }
+
+        // Ignore moves for dead players
+        if (deadPlayers.has(socket.id)) {
             return;
         }
 
@@ -126,9 +178,25 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Update authoritative state
-        state.x = data.x;
-        state.y = data.y;
+        // Tank-vs-tank collision: reject position if overlapping any other tank
+        let newX = data.x;
+        let newY = data.y;
+        let blocked = false;
+        for (const other of Object.values(players)) {
+            if (other.id === state.id) continue;
+            const overlapX = Math.abs(newX - other.x) < TANK_HALF * 2;
+            const overlapY = Math.abs(newY - other.y) < TANK_HALF * 2;
+            if (overlapX && overlapY) {
+                blocked = true;
+                break;
+            }
+        }
+
+        if (!blocked) {
+            state.x = newX;
+            state.y = newY;
+        }
+        // Always allow rotation update
         state.rotation = data.rotation;
         state.lastUpdate = now;
         state.lastMoveReceived = now;
@@ -140,20 +208,63 @@ io.on('connection', (socket) => {
 
         // Broadcast to other players only (sender already knows they shot)
         socket.to('game').emit('fire', {
-            id: state.id,
-            ...payload
+            playerId: state.id,
+            id: payload.id,
+            x: payload.x,
+            y: payload.y,
+            direction: payload.direction,
+            speed: payload.speed,
         });
+    });
+
+    // Relay simple gameplay events across clients
+    socket.on('health-update', (data: { id: string; health: number }) => {
+        const targetId = data.id;
+        // Forward the health update first
+        io.to('game').emit('health-update', data);
+
+        // If player died, handle removal and notify
+        if (data.health <= 0) {
+            // Find socket id for the target player (targetId is logical id, equals socket.id at join)
+            const victimEntry = Object.entries(players).find(([sid, p]) => p.id === targetId);
+            const victimSocketId = victimEntry ? victimEntry[0] : undefined;
+
+            if (victimSocketId) {
+                // Mark dead, remove from players so it's no longer broadcasted
+                deadPlayers.add(victimSocketId);
+                const victimState = players[victimSocketId];
+                delete players[victimSocketId];
+                // Remove from last broadcast cache to stop ghosting
+                delete lastBroadcastState[targetId];
+
+                // Inform everyone to remove that tank
+                io.to('game').emit('player-dead', { id: targetId });
+
+                // Tell the victim client
+                io.to(victimSocketId).emit('game-over', { id: targetId });
+            }
+        }
+    });
+
+    socket.on('score-update', (data: { playerId: string; score: number }) => {
+        io.to('game').emit('score-update', data);
+    });
+
+    socket.on('bullet-remove', (data: { id: string }) => {
+        io.to('game').emit('bullet-remove', data.id);
     });
 
     socket.on('disconnect', () => {
         console.log('disconnect', socket.id);
         const disconnectedPlayer = players[socket.id];
         delete players[socket.id];
+        deadPlayers.delete(socket.id);
 
         if (disconnectedPlayer) {
-            io.to('game').emit('player-disconnect', {
-                id: disconnectedPlayer.id
-            });
+            const payload = { id: disconnectedPlayer.id };
+            // Emit both for backward compatibility
+            io.to('game').emit('player-disconnect', payload);
+            io.to('game').emit('player-leave', disconnectedPlayer.id);
         }
     });
 });
@@ -219,6 +330,15 @@ app.get('/health', (_req, res) => res.json({
     players: Object.keys(players).length,
     uptime: process.uptime()
 }));
+
+// Simple leaderboard endpoint (in-memory)
+// Returns list of connected players with a placeholder score (0)
+app.get('/leaderboard', (_req, res) => {
+    const leaderboard = Object.values(players)
+        .map(p => ({ playerId: p.id, score: 0 }))
+        .sort((a, b) => b.score - a.score);
+    res.json(leaderboard);
+});
 
 const PORT = Number(process.env.PORT || 3000);
 httpServer.listen(PORT, () => {

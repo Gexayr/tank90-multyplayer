@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import WebSocketService from '../services/websocket';
+import ClientPrediction from '../services/ClientPrediction';
 
 interface Bullet {
   sprite: PIXI.Graphics;
@@ -23,9 +24,14 @@ interface Tank {
 }
 
 const GameCanvas: React.FC = () => {
+  const [gameOver, setGameOver] = useState(false);
+  const [waitingRestart, setWaitingRestart] = useState(false);
+  const gameOverRef = useRef(false);
+  const setGameOverState = (v: boolean) => { setGameOver(v); gameOverRef.current = v; };
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
+  const predictorRef = useRef<ClientPrediction | null>(null);
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef<{ [key: string]: boolean }>({});
@@ -274,8 +280,34 @@ const GameCanvas: React.FC = () => {
     };
 
     // WebSocket event handlers
+    wsService.onJoined((payload) => {
+      // Create all existing players from server snapshot
+      const localId = payload.id as string;
+      payload.players.forEach((p: any) => {
+        if (!tanksRef.current.has(p.id)) {
+          const isLocal = p.id === localId;
+          const color = isLocal ? 0xffff00 : 0x00aaff;
+          createTank(p.id, p.x ?? 0, p.y ?? 0, color, 100, 0);
+          const t = tanksRef.current.get(p.id)!;
+          t.rotation = p.rotation ?? 0;
+          t.sprite.rotation = p.rotation ?? 0;
+          updateHealthBar(t);
+        }
+      });
+      // Initialize predictor for local player
+      const me = payload.players.find((p: any) => p.id === localId);
+      if (me) {
+        predictorRef.current = new ClientPrediction(me.x ?? 0, me.y ?? 0, me.rotation ?? 0);
+      }
+      // Clear game over/waiting flags after (re)join
+      setGameOverState(false);
+      setWaitingRestart(false);
+    });
+
     wsService.onPlayerJoin((player) => {
-      createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+      const isLocal = player.id === wsService.getSocketId();
+      const color = isLocal ? 0xffff00 : 0x00aaff;
+      createTank(player.id, player.x ?? 0, player.y ?? 0, color, 100, 0);
     });
 
     wsService.onPlayerLeave((playerId) => {
@@ -334,12 +366,44 @@ const GameCanvas: React.FC = () => {
       }
     });
 
+    // When another player fires
+    wsService.onFire((data) => {
+      const { id, x, y, direction, speed, playerId } = data;
+      // Avoid duplicating a bullet that we already created locally
+      if (!bulletsRef.current.has(id)) {
+        createBullet(id, x, y, 0xffffff, playerId, direction, speed || 6);
+      }
+    });
+
     wsService.onBulletRemove((bulletId) => {
       const bullet = bulletsRef.current.get(bulletId);
       if (bullet && appRef.current) {
         appRef.current.stage.removeChild(bullet.sprite);
         bulletsRef.current.delete(bulletId);
       }
+    });
+
+    // Handle player death: remove tank from all clients
+    wsService.onPlayerDead(({ id }) => {
+      const tank = tanksRef.current.get(id);
+      if (tank && appRef.current) {
+        appRef.current.stage.removeChild(tank.sprite);
+        appRef.current.stage.removeChild(tank.healthBar);
+        if (tank.highlight) {
+          appRef.current.stage.removeChild(tank.highlight);
+          tank.highlight.destroy();
+        }
+        tanksRef.current.delete(id);
+      }
+      // If it's us, also set game over state
+      if (id === wsService.getSocketId()) {
+        setGameOverState(true);
+      }
+    });
+
+    // Local game over (from server)
+    wsService.onGameOver((_data) => {
+      setGameOverState(true);
     });
 
     wsService.onHealthUpdate((data) => {
@@ -360,20 +424,69 @@ const GameCanvas: React.FC = () => {
       }
     });
 
+    // Authoritative state updates from server (used for reconciliation and remote players)
+    wsService.onStateUpdate((state) => {
+      const localId = wsService.getSocketId();
+      state.players.forEach((p: any) => {
+        if (!tanksRef.current.has(p.id)) {
+          const isLocal = p.id === localId;
+          const color = isLocal ? 0xffff00 : 0x00aaff;
+          createTank(p.id, p.x ?? 0, p.y ?? 0, color, 100, 0);
+        }
+        const t = tanksRef.current.get(p.id)!;
+        if (p.id === localId && predictorRef.current) {
+          // Reconcile prediction with authoritative state
+          predictorRef.current.reconcileWithServer({
+            id: p.id,
+            x: p.x,
+            y: p.y,
+            rotation: p.rotation,
+            serverTime: state.serverTime,
+          });
+          const predicted = predictorRef.current.getState();
+          t.sprite.x = predicted.x;
+          t.sprite.y = predicted.y;
+          t.rotation = predicted.rotation;
+          t.sprite.rotation = predicted.rotation;
+        } else {
+          // Remote players: directly apply (or interpolate if desired)
+          t.sprite.x = p.x;
+          t.sprite.y = p.y;
+          t.rotation = p.rotation;
+          t.sprite.rotation = p.rotation;
+        }
+        updateHealthBar(t);
+        ensureHighlightState(t);
+      });
+    });
+
     // Keyboard event listeners
     const handleKeyDown = (e: KeyboardEvent) => {
       keysRef.current[e.key] = true;
 
       // Handle shooting
-      if (e.key === ' ' && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
-        const localTank = tanksRef.current.get(wsService.getSocketId() || '');
+      if (e.key === ' ' && !gameOverRef.current && !waitingRestart && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
+        const localId = wsService.getSocketId() || '';
+        const localTank = tanksRef.current.get(localId);
         if (localTank) {
           const direction = getDirectionFromRotation(localTank.rotation);
-          wsService.sendPlayerShoot(
-            localTank.sprite.x + direction.x * 25,
-            localTank.sprite.y + direction.y * 25,
-            direction
-          );
+          const speed = 6; // bullet speed per tick
+          const startX = localTank.sprite.x + direction.x * 25;
+          const startY = localTank.sprite.y + direction.y * 25;
+          const bulletId = `${localId}-${Date.now()}`;
+
+          // Create locally immediately for zero latency feedback
+          createBullet(bulletId, startX, startY, 0xffffff, localId, direction, speed);
+
+          // Notify server/others
+          wsService.sendPlayerShoot({
+            id: bulletId,
+            x: startX,
+            y: startY,
+            direction,
+            speed,
+          });
+
           lastShotTimeRef.current = Date.now();
         }
       }
@@ -388,39 +501,98 @@ const GameCanvas: React.FC = () => {
 
     // Game loop
     const gameLoop = () => {
-      const rotationSpeed = 0.1;
-
-      // Update local player
-      const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-      if (localTank) {
-        let moved = false;
-        let newRotation = localTank.rotation;
-
-        if (keysRef.current['ArrowLeft']) {
-          newRotation -= rotationSpeed;
-          moved = true;
+      // Update local player using Client-Side Prediction
+      const localId = wsService.getSocketId() || '';
+      const localTank = tanksRef.current.get(localId);
+      if (!gameOverRef.current && !waitingRestart && localTank) {
+        if (!predictorRef.current) {
+          predictorRef.current = new ClientPrediction(localTank.sprite.x, localTank.sprite.y, localTank.rotation);
         }
-        if (keysRef.current['ArrowRight']) {
-          newRotation += rotationSpeed;
-          moved = true;
-        }
-
-        if (moved) {
-          wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, newRotation);
-        }
-
-        if (keysRef.current['ArrowUp'] || keysRef.current['ArrowDown']) {
-            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation, keysRef.current['ArrowUp'] ? 'forward' : 'backward');
-        }
+        const keys = {
+          up: !!keysRef.current['ArrowUp'],
+          down: !!keysRef.current['ArrowDown'],
+          left: !!keysRef.current['ArrowLeft'],
+          right: !!keysRef.current['ArrowRight'],
+        };
+        // Predict next state and record input
+        predictorRef.current.processInput(keys);
+        const predicted = predictorRef.current.getState();
+        // Apply predicted state to local sprite
+        localTank.sprite.x = predicted.x;
+        localTank.sprite.y = predicted.y;
+        localTank.rotation = predicted.rotation;
+        localTank.sprite.rotation = predicted.rotation;
+        updateHealthBar(localTank);
+        ensureHighlightState(localTank);
+        // Send predicted move to server (throttled inside WebSocketService)
+        wsService.sendPlayerMove(predicted.x, predicted.y, predicted.rotation);
       }
 
       // Keep highlight synced (in case socket id becomes available later)
       tanksRef.current.forEach((t) => ensureHighlightState(t));
 
       // Advance bullets locally so their movement is visible between server events
+      const localIdForBullets = wsService.getSocketId() || '';
+      const bulletsToRemove: string[] = [];
       bulletsRef.current.forEach((b) => {
+        // Move bullet
         b.sprite.x += b.direction.x * b.speed;
         b.sprite.y += b.direction.y * b.speed;
+
+        // Cull bullets outside world bounds
+        if (
+          b.sprite.x < 0 || b.sprite.x > WORLD_WIDTH ||
+          b.sprite.y < 0 || b.sprite.y > WORLD_HEIGHT
+        ) {
+          bulletsToRemove.push(b.id);
+          return;
+        }
+
+        // Collision detection only by the shooter to avoid duplicates across clients
+        if (!gameOverRef.current && b.playerId === localIdForBullets) {
+          // Tank hitbox: 40x40 centered at (x,y)
+          const half = 20;
+          tanksRef.current.forEach((t, tid) => {
+            if (tid === b.playerId) return; // don't hit self
+            const minX = t.sprite.x - half;
+            const maxX = t.sprite.x + half;
+            const minY = t.sprite.y - half;
+            const maxY = t.sprite.y + half;
+            const px = b.sprite.x;
+            const py = b.sprite.y;
+            if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+              // Hit!
+              const damage = 25;
+              const newHealth = Math.max(0, (t.health ?? 100) - damage);
+              t.health = newHealth;
+              updateHealthBar(t);
+              // Notify others
+              wsService.sendHealthUpdate(t.id, newHealth);
+              // Remove bullet locally and tell others
+              bulletsToRemove.push(b.id);
+              wsService.sendBulletRemove(b.id);
+              // Score on kill
+              if (newHealth <= 0) {
+                // Victim death is handled by server: it will broadcast player-dead and game-over
+                // Increment local score only
+                const meTank = tanksRef.current.get(localIdForBullets);
+                if (meTank) {
+                  meTank.score = (meTank.score || 0) + 1;
+                  setLocalScore(meTank.score);
+                  wsService.sendScoreUpdate(localIdForBullets, meTank.score);
+                }
+              }
+            }
+          });
+        }
+      });
+      // Apply bullet removals
+      bulletsToRemove.forEach((id) => {
+        const bullet = bulletsRef.current.get(id);
+        if (bullet && appRef.current) {
+          appRef.current.stage.removeChild(bullet.sprite);
+          bulletsRef.current.delete(id);
+        }
       });
 
       // Draw minimap overlay
@@ -445,6 +617,8 @@ const GameCanvas: React.FC = () => {
         });
         appRef.current.destroy(true, true);
       }
+      // Clear predictor
+      predictorRef.current = null;
     };
   }, []);
 
@@ -488,6 +662,49 @@ const GameCanvas: React.FC = () => {
           boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
         }}
       />
+
+      {(gameOver || waitingRestart) && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            flexDirection: 'column',
+            color: 'white',
+            textShadow: '2px 2px 2px black'
+          }}
+        >
+          <h2 style={{ marginBottom: 16 }}>{waitingRestart ? 'Respawning...' : 'Game Over'}</h2>
+          <button
+            disabled={waitingRestart}
+            onClick={() => {
+              if (waitingRestart) return;
+              setWaitingRestart(true);
+              // Stop predictor to avoid sending more moves
+              predictorRef.current = null;
+              wsService.sendRestart();
+            }}
+            style={{
+              padding: '10px 18px',
+              backgroundColor: waitingRestart ? '#666' : '#28a745',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              cursor: waitingRestart ? 'not-allowed' : 'pointer',
+              fontSize: 16
+            }}
+          >
+            {waitingRestart ? 'Waiting...' : 'Restart'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

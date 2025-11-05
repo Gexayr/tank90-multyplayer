@@ -3,11 +3,11 @@ import { io, Socket } from 'socket.io-client';
 class WebSocketService {
     private socket: Socket | null = null;
     private static instance: WebSocketService;
-    private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    private readonly SERVER_URL = 'http://localhost:3000';
 
     // Rate limiting
     private lastMoveTime = 0;
-    private readonly MOVE_THROTTLE_MS = 50; // Send moves max 20 times/sec
+    private readonly MOVE_THROTTLE_MS = 100; // Send moves max 10 times/sec
 
     // Batching
     private pendingMove: { x: number; y: number; rotation: number; direction?: 'forward' | 'backward' } | null = null;
@@ -43,6 +43,8 @@ class WebSocketService {
 
         this.socket.on('connect', () => {
             console.log('Connected to server');
+            // Auto-join the game room so server sends us initial snapshot
+            this.socket!.emit('player-join', { id: this.socket!.id });
         });
 
         this.socket.on('disconnect', () => {
@@ -99,10 +101,10 @@ class WebSocketService {
         this.moveTimer = null;
     }
 
-    // Keep other methods unchanged
-    sendPlayerShoot(x: number, y: number, direction: { x: number; y: number }) {
+    // Fire event
+    sendPlayerShoot(payload: { id: string; x: number; y: number; direction: { x: number; y: number }; speed: number }) {
         if (this.socket) {
-            this.socket.emit('player-shoot', { x, y, direction });
+            this.socket.emit('fire', payload);
         }
     }
 
@@ -121,6 +123,12 @@ class WebSocketService {
     sendHealthUpdate(tankId: string, health: number) {
         if (this.socket) {
             this.socket.emit('health-update', { id: tankId, health });
+        }
+    }
+
+    sendBulletRemove(bulletId: string) {
+        if (this.socket) {
+            this.socket.emit('bullet-remove', { id: bulletId });
         }
     }
 
@@ -154,9 +162,29 @@ class WebSocketService {
         }
     }
 
+    // New: subscribe to authoritative state snapshots
+    onStateUpdate(callback: (state: any) => void) {
+        if (this.socket) {
+            this.socket.on('state-update', callback);
+        }
+    }
+
+    // New: initial join payload for the connecting client
+    onJoined(callback: (payload: any) => void) {
+        if (this.socket) {
+            this.socket.on('joined', callback);
+        }
+    }
+
     onBulletCreate(callback: (bullet: any) => void) {
         if (this.socket) {
             this.socket.on('bullet-create', callback);
+        }
+    }
+
+    onFire(callback: (data: any) => void) {
+        if (this.socket) {
+            this.socket.on('fire', callback);
         }
     }
 
@@ -169,6 +197,27 @@ class WebSocketService {
     onScoreUpdate(callback: (data: { playerId: string; score: number }) => void) {
         if (this.socket) {
             this.socket.on('score-update', callback);
+        }
+    }
+
+    // Game over for the local player
+    onGameOver(callback: (data: { id: string }) => void) {
+        if (this.socket) {
+            this.socket.on('game-over', callback);
+        }
+    }
+
+    // Someone died (remove tank)
+    onPlayerDead(callback: (data: { id: string }) => void) {
+        if (this.socket) {
+            this.socket.on('player-dead', callback);
+        }
+    }
+
+    // Request restart (respawn)
+    sendRestart() {
+        if (this.socket) {
+            this.socket.emit('restart');
         }
     }
 
