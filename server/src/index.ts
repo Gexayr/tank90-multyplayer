@@ -3,119 +3,226 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import Score from './models/Score';
 import dotenv from 'dotenv';
-import { Game } from './game/Game';
 
 dotenv.config();
 
 const app = express();
 
-// Build allowed origins list from env (comma-separated) or allow any origin by default
-const allowedOriginsEnv = process.env.FRONT_URI;
-const allowedOrigins = allowedOriginsEnv
-  ? allowedOriginsEnv.split(',').map((s) => s.trim())
-  : true; // reflect request origin
+const allowedOriginsEnv = process.env.FRONT_URI || '*';
+const allowedOrigins = allowedOriginsEnv.split(',').map(s => s.trim());
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    }
+}));
 
 const httpServer = createServer(app);
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-  },
+    cors: {
+        origin: allowedOrigins,
+        methods: ['GET', 'POST']
+    },
+    // CRITICAL: Performance settings
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    upgradeTimeout: 10000,
+    maxHttpBufferSize: 1e6, // 1MB max message size
+    transports: ['websocket', 'polling'], // Prefer WebSocket
 });
 
-// Apply CORS to HTTP routes as well
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
-app.use(express.json());
+type PlayerState = {
+    id: string;
+    x: number;
+    y: number;
+    rotation: number;
+    lastUpdate: number;
+    lastMoveReceived: number; // For rate limiting
+};
 
-const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:27017/tank90';
+const players: Record<string, PlayerState> = {};
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Configurable tick rate
+const BROADCAST_INTERVAL_MS = Number(process.env.BROADCAST_INTERVAL_MS || 100); // 10Hz
+const MOVE_RATE_LIMIT_MS = 30; // Accept moves max 33 times/sec per player
 
-// Basic route
-app.get('/', (req, res) => {
-  res.json({ message: 'Tank 90 Backend API' });
-});
-
-// Leaderboard route
-app.get('/leaderboard', async (req, res) => {
-  try {
-    const scores = await Score.find().sort({ score: -1 }).limit(10);
-    res.json(scores);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching leaderboard' });
-  }
-});
-
-const game = new Game();
-
-// Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+    console.log('socket connected', socket.id);
 
-  const player = game.addPlayer(socket.id);
+    socket.on('player-join', (payload: { id?: string; x?: number; y?: number; rotation?: number }) => {
+        const id = payload?.id || socket.id;
+        const now = Date.now();
+        players[socket.id] = {
+            id,
+            x: payload?.x ?? 0,
+            y: payload?.y ?? 0,
+            rotation: payload?.rotation ?? 0,
+            lastUpdate: now,
+            lastMoveReceived: 0
+        };
+        socket.join('game');
 
-  // Send current game state to the new player
-  socket.emit('game-state', game.getGameState());
+        // Send initial state to new player
+        socket.emit('joined', {
+            id,
+            serverTime: now,
+            players: Object.values(players).map(p => ({
+                id: p.id,
+                x: p.x,
+                y: p.y,
+                rotation: p.rotation
+            }))
+        });
 
-  // Notify other players about the new player
-  socket.broadcast.emit('player-join', player);
+        // Notify others about new player
+        socket.to('game').emit('player-join', {
+            id,
+            x: players[socket.id].x,
+            y: players[socket.id].y,
+            rotation: players[socket.id].rotation
+        });
 
-  // Handle player movement
-  socket.on('player-move', (data: { x: number; y: number; rotation: number, direction?: 'forward' | 'backward' }) => {
-    game.movePlayer(socket.id, data.x, data.y, data.rotation, data.direction);
-    const player = game.getGameState().players.find(p => p.id === socket.id);
-    if (player) {
-      io.emit('player-move', {
-        id: socket.id,
-        x: player.x,
-        y: player.y,
-        rotation: player.rotation
-      });
-    }
-  });
+        console.log(`player-join ${id} (${socket.id})`);
+    });
 
-  // Handle player shooting
-  socket.on('player-shoot', (data: { x: number; y: number; direction: { x: number; y: number } }) => {
-    const bullet = game.createBullet(socket.id, data.x, data.y, data.direction);
-    io.emit('bullet-create', bullet);
-  });
+    socket.on('player-move', (data: { x: number; y: number; rotation: number; direction?: string }) => {
+        const state = players[socket.id];
+        const now = Date.now();
 
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-    game.removePlayer(socket.id);
-    io.emit('player-leave', socket.id);
-  });
+        if (!state) {
+            // Create state if doesn't exist
+            players[socket.id] = {
+                id: socket.id,
+                x: data.x,
+                y: data.y,
+                rotation: data.rotation,
+                lastUpdate: now,
+                lastMoveReceived: now
+            };
+            return;
+        }
+
+        // Rate limiting: ignore moves that come too quickly
+        if (now - state.lastMoveReceived < MOVE_RATE_LIMIT_MS) {
+            return; // Silently drop (client is sending too fast)
+        }
+
+        // Basic validation (prevent teleporting)
+        const distanceMoved = Math.sqrt(
+            Math.pow(data.x - state.x, 2) +
+            Math.pow(data.y - state.y, 2)
+        );
+
+        const MAX_MOVE_DISTANCE = 100; // pixels per move
+        if (distanceMoved > MAX_MOVE_DISTANCE) {
+            console.warn(`Player ${socket.id} tried to move ${distanceMoved}px (possible cheat)`);
+            // Reject the move, keep old position
+            return;
+        }
+
+        // Update authoritative state
+        state.x = data.x;
+        state.y = data.y;
+        state.rotation = data.rotation;
+        state.lastUpdate = now;
+        state.lastMoveReceived = now;
+    });
+
+    socket.on('fire', (payload) => {
+        const state = players[socket.id];
+        if (!state) return;
+
+        // Broadcast to other players only (sender already knows they shot)
+        socket.to('game').emit('fire', {
+            id: state.id,
+            ...payload
+        });
+    });
+
+    socket.on('disconnect', () => {
+        console.log('disconnect', socket.id);
+        const disconnectedPlayer = players[socket.id];
+        delete players[socket.id];
+
+        if (disconnectedPlayer) {
+            io.to('game').emit('player-disconnect', {
+                id: disconnectedPlayer.id
+            });
+        }
+    });
 });
 
-// Game event handling
-game.on('bullet-removed', (bulletId) => {
-  io.emit('bullet-remove', bulletId);
-});
+/**
+ * Broadcast game state at fixed tick rate
+ * Only send data that has changed since last broadcast
+ */
+let lastBroadcastState: Record<string, { x: number; y: number; rotation: number }> = {};
 
-game.on('health-update', (data) => {
-  io.emit('health-update', data);
-});
+setInterval(() => {
+    const playersList = Object.values(players);
 
-game.on('score-update', (data) => {
-  io.emit('score-update', data);
-});
+    if (playersList.length === 0) return; // No players, skip broadcast
 
-game.on('player-removed', (playerId) => {
-  io.emit('player-leave', playerId);
-});
+    // Only send players that have moved since last broadcast
+    const changedPlayers = playersList.filter(p => {
+        const last = lastBroadcastState[p.id];
+        if (!last) return true; // New player
 
+        // Check if position/rotation changed significantly
+        return (
+            Math.abs(p.x - last.x) > 0.1 ||
+            Math.abs(p.y - last.y) > 0.1 ||
+            Math.abs(p.rotation - last.rotation) > 0.01
+        );
+    });
+
+    if (changedPlayers.length === 0) return; // No changes, skip broadcast
+
+    const snapshot = changedPlayers.map(p => ({
+        id: p.id,
+        x: Math.round(p.x * 10) / 10, // Round to reduce payload size
+        y: Math.round(p.y * 10) / 10,
+        rotation: Math.round(p.rotation * 100) / 100,
+        lastUpdate: p.lastUpdate
+    }));
+
+    // Update last broadcast state
+    snapshot.forEach(p => {
+        lastBroadcastState[p.id] = { x: p.x, y: p.y, rotation: p.rotation };
+    });
+
+    io.to('game').emit('state-update', {
+        serverTime: Date.now(),
+        players: snapshot
+    });
+}, BROADCAST_INTERVAL_MS);
+
+// Clean up disconnected players from lastBroadcastState every 30 seconds
+setInterval(() => {
+    const currentPlayerIds = new Set(Object.values(players).map(p => p.id));
+    Object.keys(lastBroadcastState).forEach(id => {
+        if (!currentPlayerIds.has(id)) {
+            delete lastBroadcastState[id];
+        }
+    });
+}, 30000);
+
+app.get('/', (_req, res) => res.send('OK'));
+app.get('/health', (_req, res) => res.json({
+    status: 'ok',
+    players: Object.keys(players).length,
+    uptime: process.uptime()
+}));
+
+const PORT = Number(process.env.PORT || 3000);
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Broadcast interval: ${BROADCAST_INTERVAL_MS}ms`);
+    console.log(`Move rate limit: ${MOVE_RATE_LIMIT_MS}ms`);
 });

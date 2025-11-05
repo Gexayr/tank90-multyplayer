@@ -1,136 +1,180 @@
 import { io, Socket } from 'socket.io-client';
 
 class WebSocketService {
-  private socket: Socket | null = null;
-  private static instance: WebSocketService;
-  private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    private socket: Socket | null = null;
+    private static instance: WebSocketService;
+    private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
-  private constructor() {}
+    // Rate limiting
+    private lastMoveTime = 0;
+    private readonly MOVE_THROTTLE_MS = 50; // Send moves max 20 times/sec
 
-  static getInstance(): WebSocketService {
-    if (!WebSocketService.instance) {
-      WebSocketService.instance = new WebSocketService();
+    // Batching
+    private pendingMove: { x: number; y: number; rotation: number; direction?: 'forward' | 'backward' } | null = null;
+    private moveTimer: number | null = null;
+
+    private constructor() {}
+
+    static getInstance(): WebSocketService {
+        if (!WebSocketService.instance) {
+            WebSocketService.instance = new WebSocketService();
+        }
+        return WebSocketService.instance;
     }
-    return WebSocketService.instance;
-  }
 
-  connect() {
-    console.log('Connecting to server:', this.SERVER_URL);
-    // Prefer polling first to work around reverse proxies/CDNs that do not pass WebSocket upgrades.
-    // Socket.IO will attempt to upgrade to WebSocket when possible.
-    this.socket = io(this.SERVER_URL, {
-      transports: ['polling', 'websocket'],
-      withCredentials: false,
-    });
+    connect() {
+        console.log('Connecting to server:', this.SERVER_URL);
 
-    this.socket.on('connect', () => {
-      console.log('Connected to server');
-    });
+        this.socket = io(this.SERVER_URL, {
+            // CRITICAL: Start with WebSocket for lower latency
+            transports: ['websocket', 'polling'],
 
-    this.socket.on('disconnect', () => {
-      console.log('Disconnected from server');
-    });
+            // Reconnection settings
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: 5,
 
-    this.socket.on('connect_error', (error: Error) => {
-      console.error('Connection error:', error.message);
-    });
-  }
+            // Performance settings
+            upgrade: false, // Don't waste time upgrading
+            rememberUpgrade: true,
 
-  disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
+            withCredentials: false,
+        });
+
+        this.socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        this.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+
+        this.socket.on('connect_error', (error: Error) => {
+            console.error('Connection error:', error.message);
+        });
     }
-  }
 
-  // Player movement
-  sendPlayerMove(x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
-    if (this.socket) {
-      this.socket.emit('player-move', { x, y, rotation, direction });
+    disconnect() {
+        if (this.socket) {
+            this.socket.disconnect();
+            this.socket = null;
+        }
+        if (this.moveTimer) {
+            clearTimeout(this.moveTimer);
+        }
     }
-  }
 
-  // Player shooting
-  sendPlayerShoot(x: number, y: number, direction: { x: number; y: number }) {
-    if (this.socket) {
-      this.socket.emit('player-shoot', { x, y, direction });
+    // Throttled and batched player movement
+    sendPlayerMove(x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
+        if (!this.socket) return;
+
+        const now = Date.now();
+
+        // Store the latest move
+        this.pendingMove = { x, y, rotation, direction };
+
+        // If we recently sent a move, batch this one
+        if (now - this.lastMoveTime < this.MOVE_THROTTLE_MS) {
+            // Clear existing timer and set new one
+            if (this.moveTimer) {
+                clearTimeout(this.moveTimer);
+            }
+
+            this.moveTimer = window.setTimeout(() => {
+                this.flushMove();
+            }, this.MOVE_THROTTLE_MS);
+            return;
+        }
+
+        // Send immediately if enough time has passed
+        this.flushMove();
     }
-  }
 
-  // Tank destroyed
-  sendTankDestroyed(tankId: string) {
-    if (this.socket) {
-      this.socket.emit('tank-destroyed', { tankId });
+    private flushMove() {
+        if (!this.socket || !this.pendingMove) return;
+
+        this.socket.emit('player-move', this.pendingMove);
+        this.lastMoveTime = Date.now();
+        this.pendingMove = null;
+        this.moveTimer = null;
     }
-  }
 
-  // Score update
-  sendScoreUpdate(playerId: string, score: number) {
-    if (this.socket) {
-      this.socket.emit('score-update', { playerId, score });
+    // Keep other methods unchanged
+    sendPlayerShoot(x: number, y: number, direction: { x: number; y: number }) {
+        if (this.socket) {
+            this.socket.emit('player-shoot', { x, y, direction });
+        }
     }
-  }
 
-  // Health update
-  sendHealthUpdate(tankId: string, health: number) {
-    if (this.socket) {
-      this.socket.emit('health-update', { id: tankId, health });
+    sendTankDestroyed(tankId: string) {
+        if (this.socket) {
+            this.socket.emit('tank-destroyed', { tankId });
+        }
     }
-  }
 
-  // Event listeners
-  onPlayerJoin(callback: (player: any) => void) {
-    if (this.socket) {
-      this.socket.on('player-join', callback);
+    sendScoreUpdate(playerId: string, score: number) {
+        if (this.socket) {
+            this.socket.emit('score-update', { playerId, score });
+        }
     }
-  }
 
-  onPlayerLeave(callback: (playerId: string) => void) {
-    if (this.socket) {
-      this.socket.on('player-leave', callback);
+    sendHealthUpdate(tankId: string, health: number) {
+        if (this.socket) {
+            this.socket.emit('health-update', { id: tankId, health });
+        }
     }
-  }
 
-  onPlayerMove(callback: (data: { id: string; x: number; y: number; rotation: number }) => void) {
-    if (this.socket) {
-      this.socket.on('player-move', callback);
+    onPlayerJoin(callback: (player: any) => void) {
+        if (this.socket) {
+            this.socket.on('player-join', callback);
+        }
     }
-  }
 
-  onHealthUpdate(callback: (data: { id: string; health: number }) => void) {
-    if (this.socket) {
-      this.socket.on('health-update', callback);
+    onPlayerLeave(callback: (playerId: string) => void) {
+        if (this.socket) {
+            this.socket.on('player-leave', callback);
+        }
     }
-  }
 
-  onGameStateUpdate(callback: (state: any) => void) {
-    if (this.socket) {
-      this.socket.on('game-state', callback);
+    onPlayerMove(callback: (data: { id: string; x: number; y: number; rotation: number }) => void) {
+        if (this.socket) {
+            this.socket.on('player-move', callback);
+        }
     }
-  }
 
-  onBulletCreate(callback: (bullet: any) => void) {
-    if (this.socket) {
-      this.socket.on('bullet-create', callback);
+    onHealthUpdate(callback: (data: { id: string; health: number }) => void) {
+        if (this.socket) {
+            this.socket.on('health-update', callback);
+        }
     }
-  }
 
-  onBulletRemove(callback: (bulletId: string) => void) {
-    if (this.socket) {
-      this.socket.on('bullet-remove', callback);
+    onGameStateUpdate(callback: (state: any) => void) {
+        if (this.socket) {
+            this.socket.on('game-state', callback);
+        }
     }
-  }
 
-  onScoreUpdate(callback: (data: { playerId: string; score: number }) => void) {
-    if (this.socket) {
-      this.socket.on('score-update', callback);
+    onBulletCreate(callback: (bullet: any) => void) {
+        if (this.socket) {
+            this.socket.on('bullet-create', callback);
+        }
     }
-  }
 
-  // Get socket ID
-  getSocketId(): string | undefined {
-    return this.socket?.id;
-  }
+    onBulletRemove(callback: (bulletId: string) => void) {
+        if (this.socket) {
+            this.socket.on('bullet-remove', callback);
+        }
+    }
+
+    onScoreUpdate(callback: (data: { playerId: string; score: number }) => void) {
+        if (this.socket) {
+            this.socket.on('score-update', callback);
+        }
+    }
+
+    getSocketId(): string | undefined {
+        return this.socket?.id;
+    }
 }
 
-export default WebSocketService; 
+export default WebSocketService;
