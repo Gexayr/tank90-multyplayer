@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 class WebSocketService {
     private socket: Socket | null = null;
     private static instance: WebSocketService;
-    private readonly SERVER_URL = 'http://localhost:3000';
+    private readonly SERVER_URL = import.meta.env.VITE_SERVER_URL || process.env.VITE_SERVER_URL || 'http://localhost:3000';
 
     // Rate limiting
     private lastMoveTime = 0;

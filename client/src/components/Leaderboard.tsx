@@ -8,11 +8,12 @@ interface Score {
 const Leaderboard: React.FC = () => {
   const [scores, setScores] = useState<Score[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const backurl: string = import.meta.env.VITE_SERVER_URL || process.env.VITE_SERVER_URL || 'http://localhost:3000';
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
-        const response = await fetch('http://localhost:3000/leaderboard');
+        const response = await fetch(`${backurl}/leaderboard`);
         if (!response.ok) {
           throw new Error('Failed to fetch leaderboard');
         }
