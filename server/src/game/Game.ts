@@ -25,6 +25,8 @@ export class Game extends EventEmitter {
   private bullets = new Map<string, Bullet>();
   private nextPlayerColor = 0xFFFF00;
   private colors = [0xFFFF00, 0x0000FF, 0xFF0000, 0x00FF00, 0xFF00FF, 0x00FFFF];
+  private readonly WORLD_WIDTH = 4000;
+  private readonly WORLD_HEIGHT = 4000;
 
   constructor() {
     super();
@@ -38,8 +40,8 @@ export class Game extends EventEmitter {
     const color = this.colors[this.players.size % this.colors.length];
     const player: Player = {
       id,
-      x: Math.random() * 700 + 50,
-      y: Math.random() * 500 + 50,
+      x: Math.random() * (this.WORLD_WIDTH - 100) + 50,
+      y: Math.random() * (this.WORLD_HEIGHT - 100) + 50,
       rotation: 0,
       color,
       health: 100,
@@ -80,8 +82,8 @@ export class Game extends EventEmitter {
         }
 
         // Keep within bounds first
-        proposedX = Math.max(20, Math.min(proposedX, 780));
-        proposedY = Math.max(20, Math.min(proposedY, 580));
+        proposedX = Math.max(20, Math.min(proposedX, this.WORLD_WIDTH - 20));
+        proposedY = Math.max(20, Math.min(proposedY, this.WORLD_HEIGHT - 20));
 
         // Tank-tank collision: prevent overlapping with other players (circle approx, radius 20)
         const minDistance = 40; // two radii
@@ -140,7 +142,7 @@ export class Game extends EventEmitter {
       bullet.y += bullet.direction.y * bullet.speed;
 
       // Remove bullets that are out of bounds
-      if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) {
+      if (bullet.x < 0 || bullet.x > this.WORLD_WIDTH || bullet.y < 0 || bullet.y > this.WORLD_HEIGHT) {
         this.bullets.delete(bulletId);
         this.emit('bullet-removed', bulletId);
       }

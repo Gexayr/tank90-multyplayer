@@ -25,6 +25,7 @@ interface Tank {
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
+  const worldRef = useRef<PIXI.Container | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
@@ -52,10 +53,10 @@ const GameCanvas: React.FC = () => {
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
   // Minimap configuration
-  const MINIMAP_WIDTH = 160; // 20% of 800
-  const MINIMAP_HEIGHT = 120; // 20% of 600
-  const WORLD_WIDTH = 800;
-  const WORLD_HEIGHT = 600;
+  const MINIMAP_WIDTH = 160; // fixed minimap size
+  const MINIMAP_HEIGHT = 120;
+  const WORLD_WIDTH = 4000;
+  const WORLD_HEIGHT = 4000;
   const MINIMAP_SCALE_X = MINIMAP_WIDTH / WORLD_WIDTH;
   const MINIMAP_SCALE_Y = MINIMAP_HEIGHT / WORLD_HEIGHT;
 
@@ -65,8 +66,8 @@ const GameCanvas: React.FC = () => {
     healthBar.beginFill(0x00ff00);
     healthBar.drawRect(-20, 30, 40, 5);
     healthBar.endFill();
-    if (appRef.current) {
-      appRef.current.stage.addChild(healthBar);
+    if (worldRef.current) {
+      worldRef.current.addChild(healthBar);
       // Ensure health bar is drawn behind the tank
       healthBar.zIndex = 0;
     }
@@ -92,8 +93,8 @@ const GameCanvas: React.FC = () => {
 
     // Create PIXI Application
     const app = new PIXI.Application({
-      width: 800,
-      height: 600,
+      width: window.innerWidth,
+      height: window.innerHeight,
       backgroundColor: 0x000000,
       resolution: window.devicePixelRatio || 1,
     });
@@ -105,20 +106,25 @@ const GameCanvas: React.FC = () => {
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
     appRef.current = app;
 
-    // Draw background grid
+    // Create world container and background grid across full world
+    const world = new PIXI.Container();
+    world.sortableChildren = true;
+    app.stage.addChild(world);
+    worldRef.current = world;
+
     const grid = new PIXI.Graphics();
     const gridSize = 40; // size of each cell
     grid.lineStyle(1, 0x444444, 0.4);
-    for (let x = 0; x <= app.view.width; x += gridSize) {
+    for (let x = 0; x <= WORLD_WIDTH; x += gridSize) {
       grid.moveTo(x + 0.5, 0);
-      grid.lineTo(x + 0.5, app.view.height);
+      grid.lineTo(x + 0.5, WORLD_HEIGHT);
     }
-    for (let y = 0; y <= app.view.height; y += gridSize) {
+    for (let y = 0; y <= WORLD_HEIGHT; y += gridSize) {
       grid.moveTo(0, y + 0.5);
-      grid.lineTo(app.view.width, y + 0.5);
+      grid.lineTo(WORLD_WIDTH, y + 0.5);
     }
     grid.zIndex = -10; // behind everything
-    app.stage.addChild(grid);
+    world.addChild(grid);
 
     // Connect to WebSocket server
     wsService.connect();
@@ -209,12 +215,14 @@ const GameCanvas: React.FC = () => {
           hl.lineStyle(0.8, 0xffff00, 0.5);
           hl.drawRoundedRect(-23, -23, 46, 46, 8);
           hl.zIndex = 0.75; // between health bar and tank
-          appRef.current.stage.addChild(hl);
+          (worldRef.current || app.stage).addChild(hl);
           tank.highlight = hl;
         }
       } else {
-        if (tank.highlight && appRef.current) {
-          appRef.current.stage.removeChild(tank.highlight);
+        if (tank.highlight) {
+          if (worldRef.current) {
+            worldRef.current.removeChild(tank.highlight);
+          }
           tank.highlight.destroy();
           delete tank.highlight;
         }
@@ -245,7 +253,7 @@ const GameCanvas: React.FC = () => {
       tank.y = y;
       // Ensure tank draws above health bar
       tank.zIndex = 1;
-      app.stage.addChild(tank);
+      (worldRef.current || app.stage).addChild(tank);
 
       const newTank: Tank = {
         sprite: tank,
@@ -272,7 +280,7 @@ const GameCanvas: React.FC = () => {
       bullet.endFill();
       bullet.x = x;
       bullet.y = y;
-      app.stage.addChild(bullet);
+      (worldRef.current || app.stage).addChild(bullet);
 
       bulletsRef.current.set(id, {
         sprite: bullet,
@@ -291,12 +299,14 @@ const GameCanvas: React.FC = () => {
 
     wsService.onPlayerLeave((playerId) => {
       const tank = tanksRef.current.get(playerId);
-      if (tank && appRef.current) {
-        appRef.current.stage.removeChild(tank.sprite);
-        appRef.current.stage.removeChild(tank.healthBar);
-        if (tank.highlight) {
-          appRef.current.stage.removeChild(tank.highlight);
-          tank.highlight.destroy();
+      if (tank) {
+        if (worldRef.current) {
+          worldRef.current.removeChild(tank.sprite);
+          worldRef.current.removeChild(tank.healthBar);
+          if (tank.highlight) {
+            worldRef.current.removeChild(tank.highlight);
+            tank.highlight.destroy();
+          }
         }
         tanksRef.current.delete(playerId);
       }
@@ -347,8 +357,10 @@ const GameCanvas: React.FC = () => {
 
     wsService.onBulletRemove((bulletId) => {
       const bullet = bulletsRef.current.get(bulletId);
-      if (bullet && appRef.current) {
-        appRef.current.stage.removeChild(bullet.sprite);
+      if (bullet) {
+        if (worldRef.current) {
+          worldRef.current.removeChild(bullet.sprite);
+        }
         bulletsRef.current.delete(bulletId);
       }
     });
@@ -450,9 +462,37 @@ const GameCanvas: React.FC = () => {
         b.sprite.y += b.direction.y * b.speed;
       });
 
+      // Camera follow: center local tank, clamp to world bounds
+      if (appRef.current && worldRef.current) {
+        const app = appRef.current;
+        const world = worldRef.current;
+        const viewW = app.view.width;
+        const viewH = app.view.height;
+        let targetX = 0;
+        let targetY = 0;
+        const lt = tanksRef.current.get(wsService.getSocketId() || '');
+        if (lt) {
+          targetX = viewW / 2 - lt.sprite.x;
+          targetY = viewH / 2 - lt.sprite.y;
+        }
+        // Clamp so world does not reveal outside edges
+        const minX = Math.min(0, viewW - WORLD_WIDTH);
+        const maxX = 0;
+        const minY = Math.min(0, viewH - WORLD_HEIGHT);
+        const maxY = 0;
+        world.x = Math.max(minX, Math.min(targetX, maxX));
+        world.y = Math.max(minY, Math.min(targetY, maxY));
+      }
+
       // Draw minimap overlay
       drawMinimap();
     };
+
+    // Resize handler to keep full-screen canvas
+    const handleResize = () => {
+      app.renderer.resize(window.innerWidth, window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
 
     // Add game loop to PIXI ticker
     app.ticker.add(gameLoop);
@@ -461,6 +501,7 @@ const GameCanvas: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('resize', handleResize);
       app.ticker.remove(gameLoop);
       wsService.disconnect();
       if (appRef.current) {
@@ -480,11 +521,10 @@ const GameCanvas: React.FC = () => {
       <div
         ref={canvasRef}
         style={{
-          width: '800px',
-          height: '600px',
-          margin: '0 auto',
-          border: '2px solid #333',
-          touchAction: 'none'
+          width: '100vw',
+          height: '100vh',
+          margin: 0,
+          border: '2px solid #333'
         }}
       />
       <div
@@ -521,7 +561,6 @@ const GameCanvas: React.FC = () => {
           <div
             ref={joystickRef}
             onTouchStart={(e) => {
-              e.preventDefault();
               const rect = (e.target as HTMLElement).getBoundingClientRect();
               const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
               setJoystickCenter(center);
@@ -532,7 +571,6 @@ const GameCanvas: React.FC = () => {
               joystickVecRef.current = { x: 0, y: 0 };
             }}
             onTouchMove={(e) => {
-              e.preventDefault();
               const touch = e.touches[0];
               if (!joystickCenter) return;
               const dx = touch.clientX - joystickCenter.x;
@@ -547,8 +585,7 @@ const GameCanvas: React.FC = () => {
               joystickMagnitudeRef.current = dist / maxRadius;
               joystickVecRef.current = { x: Math.cos(angle) * (dist / maxRadius), y: Math.sin(angle) * (dist / maxRadius) };
             }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
+            onTouchEnd={() => {
               setJoystickActive(false);
               setJoystickKnob({ x: 0, y: 0 });
               joystickAngleRef.current = null;
@@ -589,8 +626,7 @@ const GameCanvas: React.FC = () => {
           </div>
 
           <div
-            onTouchStart={(e) => {
-              e.preventDefault();
+            onTouchStart={() => {
               const localTank = tanksRef.current.get(wsService.getSocketId() || '');
               if (!localTank) return;
               if (Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
@@ -613,6 +649,7 @@ const GameCanvas: React.FC = () => {
               background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6), rgba(255,0,0,0.6))',
               border: '2px solid rgba(255,255,255,0.2)',
               zIndex: 1001,
+              touchAction: 'none'
             }}
           />
         </>
