@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import WebSocketService from '../services/websocket';
 
@@ -29,8 +29,26 @@ const GameCanvas: React.FC = () => {
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef<{ [key: string]: boolean }>({});
+  // Touch/joystick controls
+  const isTouchDevice = useMemo(() => typeof window !== 'undefined' && ('ontouchstart' in window || (navigator as any).maxTouchPoints > 0), []);
+  const joystickRef = useRef<HTMLDivElement | null>(null);
+  const [joystickActive, setJoystickActive] = useState(false);
+  const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null);
+  const [joystickKnob, setJoystickKnob] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const joystickAngleRef = useRef<number | null>(null);
+  const joystickMagnitudeRef = useRef<number>(0);
+  const joystickVecRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const SHOOT_BTN_SIZE = 80;
   const lastShotTimeRef = useRef<number>(0);
   const SHOT_COOLDOWN = 500; // milliseconds between shots
+
+  // Calculate direction vector from rotation
+  const getDirectionFromRotation = (rotation: number) => {
+    return {
+      x: Math.sin(rotation),
+      y: -Math.cos(rotation),
+    };
+  };
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
   // Minimap configuration
@@ -265,13 +283,6 @@ const GameCanvas: React.FC = () => {
       });
     };
 
-    // Calculate direction vector from rotation
-    const getDirectionFromRotation = (rotation: number) => {
-      return {
-        x: Math.sin(rotation),
-        y: -Math.cos(rotation),
-      };
-    };
 
     // WebSocket event handlers
     wsService.onPlayerJoin((player) => {
@@ -396,21 +407,37 @@ const GameCanvas: React.FC = () => {
         let moved = false;
         let newRotation = localTank.rotation;
 
-        if (keysRef.current['ArrowLeft']) {
-          newRotation -= rotationSpeed;
-          moved = true;
-        }
-        if (keysRef.current['ArrowRight']) {
-          newRotation += rotationSpeed;
-          moved = true;
-        }
+        // Keyboard controls (desktop)
+        if (!isTouchDevice) {
+          if (keysRef.current['ArrowLeft']) {
+            newRotation -= rotationSpeed;
+            moved = true;
+          }
+          if (keysRef.current['ArrowRight']) {
+            newRotation += rotationSpeed;
+            moved = true;
+          }
 
-        if (moved) {
-          wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, newRotation);
-        }
+          if (moved) {
+            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, newRotation);
+          }
 
-        if (keysRef.current['ArrowUp'] || keysRef.current['ArrowDown']) {
-            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation, keysRef.current['ArrowUp'] ? 'forward' : 'backward');
+          if (keysRef.current['ArrowUp'] || keysRef.current['ArrowDown']) {
+            wsService.sendPlayerMove(
+              localTank.sprite.x,
+              localTank.sprite.y,
+              localTank.rotation,
+              keysRef.current['ArrowUp'] ? 'forward' : 'backward'
+            );
+          }
+        } else {
+          // Touch joystick controls (mobile)
+          const mag = joystickMagnitudeRef.current;
+          const vec = joystickVecRef.current;
+          if (mag > 0.05) {
+            const targetRot = Math.atan2(vec.x, -vec.y);
+            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, targetRot, mag > 0.2 ? 'forward' : undefined);
+          }
         }
       }
 
@@ -457,6 +484,7 @@ const GameCanvas: React.FC = () => {
           height: '600px',
           margin: '0 auto',
           border: '2px solid #333',
+          touchAction: 'none'
         }}
       />
       <div
@@ -488,6 +516,107 @@ const GameCanvas: React.FC = () => {
           boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
         }}
       />
+      {isTouchDevice && (
+        <>
+          <div
+            ref={joystickRef}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              const rect = (e.target as HTMLElement).getBoundingClientRect();
+              const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+              setJoystickCenter(center);
+              setJoystickActive(true);
+              setJoystickKnob({ x: 0, y: 0 });
+              joystickAngleRef.current = null;
+              joystickMagnitudeRef.current = 0;
+              joystickVecRef.current = { x: 0, y: 0 };
+            }}
+            onTouchMove={(e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              if (!joystickCenter) return;
+              const dx = touch.clientX - joystickCenter.x;
+              const dy = touch.clientY - joystickCenter.y;
+              const maxRadius = 50;
+              const dist = Math.min(Math.hypot(dx, dy), maxRadius);
+              const angle = Math.atan2(dy, dx);
+              const nx = Math.cos(angle) * dist;
+              const ny = Math.sin(angle) * dist;
+              setJoystickKnob({ x: nx, y: ny });
+              joystickAngleRef.current = angle;
+              joystickMagnitudeRef.current = dist / maxRadius;
+              joystickVecRef.current = { x: Math.cos(angle) * (dist / maxRadius), y: Math.sin(angle) * (dist / maxRadius) };
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              setJoystickActive(false);
+              setJoystickKnob({ x: 0, y: 0 });
+              joystickAngleRef.current = null;
+              joystickMagnitudeRef.current = 0;
+              joystickVecRef.current = { x: 0, y: 0 };
+              const localTank = tanksRef.current.get(wsService.getSocketId() || '');
+              if (localTank) {
+                wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation);
+              }
+            }}
+            style={{
+              position: 'fixed',
+              left: 20,
+              bottom: 20,
+              width: 120,
+              height: 120,
+              borderRadius: 60,
+              background: 'rgba(255,255,255,0.08)',
+              border: '2px solid rgba(255,255,255,0.15)',
+              zIndex: 1001,
+              touchAction: 'none'
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                width: 16,
+                height: 16,
+                marginLeft: -8,
+                marginTop: -8,
+                background: 'rgba(255,255,255,0.35)',
+                borderRadius: 8,
+                transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
+              }}
+            />
+          </div>
+
+          <div
+            onTouchStart={(e) => {
+              e.preventDefault();
+              const localTank = tanksRef.current.get(wsService.getSocketId() || '');
+              if (!localTank) return;
+              if (Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
+                const dir = getDirectionFromRotation(localTank.rotation);
+                wsService.sendPlayerShoot(
+                  localTank.sprite.x + dir.x * 25,
+                  localTank.sprite.y + dir.y * 25,
+                  dir
+                );
+                lastShotTimeRef.current = Date.now();
+              }
+            }}
+            style={{
+              position: 'fixed',
+              right: 20,
+              bottom: 30,
+              width: SHOOT_BTN_SIZE,
+              height: SHOOT_BTN_SIZE,
+              borderRadius: SHOOT_BTN_SIZE / 2,
+              background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6), rgba(255,0,0,0.6))',
+              border: '2px solid rgba(255,255,255,0.2)',
+              zIndex: 1001,
+            }}
+          />
+        </>
+      )}
     </div>
   );
 };
