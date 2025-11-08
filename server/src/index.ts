@@ -16,11 +16,15 @@ const io = new Server(httpServer, {
     origin: process.env.FRONT_URI || "http://localhost:5173",
     methods: ["GET", "POST"]
   },
-  // Configure Socket.IO to prefer WebSocket transport
-  transports: ['websocket'], // Only allow WebSocket connections, no polling
+  // Configure Socket.IO to prefer WebSocket but allow polling fallback
+  // This ensures connections work even if WebSocket is blocked by proxies/firewalls
+  transports: ['websocket', 'polling'], // Allow both, prefer WebSocket
   allowEIO3: true, // Allow Engine.IO v3 clients for compatibility
   pingTimeout: 60000, // 60 seconds
   pingInterval: 25000, // 25 seconds
+  // Connection settings for better reliability
+  connectTimeout: 45000, // 45 seconds connection timeout
+  maxHttpBufferSize: 1e6, // 1MB max message size
 });
 
 app.use(cors());

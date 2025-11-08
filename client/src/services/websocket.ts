@@ -16,16 +16,17 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
-    // Configure Socket.IO to aggressively prefer WebSocket transport
-    // This prevents fallback to inefficient HTTP long-polling
+    // Configure Socket.IO to prefer WebSocket but allow polling fallback
+    // This ensures connection works even if WebSocket is blocked by proxies/firewalls
     this.socket = io(this.SERVER_URL, {
-      transports: ['websocket'], // Only use WebSocket, no polling fallback
-      upgrade: false, // Disable automatic transport upgrades (we only want WS)
+      transports: ['websocket', 'polling'], // Try WebSocket first, fallback to polling if needed
+      upgrade: true, // Allow automatic upgrade from polling to WebSocket when available
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10, // More attempts for better reliability
       timeout: 20000, // 20 second connection timeout
+      forceNew: false, // Reuse existing connection if available
     });
 
     this.socket.on('connect', () => {
