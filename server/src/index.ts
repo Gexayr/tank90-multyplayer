@@ -52,8 +52,11 @@ io.on('connection', (socket) => {
 
   const player = game.addPlayer(socket.id);
 
-  // Send current game state to the new player
+  // Send current game state to the new player (includes map objects)
   socket.emit('game-state', game.getGameState());
+  
+  // Also send map objects separately for initial load
+  socket.emit('map-objects', game.getMapObjects());
 
   // Notify other players about the new player
   socket.broadcast.emit('player-join', player);
@@ -122,6 +125,10 @@ game.on('score-update', (data) => {
 
 game.on('player-removed', (playerId) => {
   io.emit('player-leave', playerId);
+});
+
+game.on('map-update', (data) => {
+  io.emit('map-update', data);
 });
 
 // Periodic state updates with command confirmations

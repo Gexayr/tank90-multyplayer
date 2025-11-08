@@ -116,6 +116,19 @@ class WebSocketService {
     }
   }
 
+  // Map objects and updates
+  onMapObjects(callback: (objects: any[]) => void) {
+    if (this.socket) {
+      this.socket.on('map-objects', callback);
+    }
+  }
+
+  onMapUpdate(callback: (data: { objectId: string; destroyed: boolean }) => void) {
+    if (this.socket) {
+      this.socket.on('map-update', callback);
+    }
+  }
+
   onBulletCreate(callback: (bullet: any) => void) {
     if (this.socket) {
       this.socket.on('bullet-create', callback);

@@ -1,5 +1,6 @@
 import Score from '../models/Score';
 import { EventEmitter } from 'events';
+import { MapObject, MapObjectType, generateMapLayout, circleCollidesWithMapObject, pointInMapObject } from './MapObject';
 
 export interface Player {
   id: string;
@@ -27,6 +28,10 @@ export class Game extends EventEmitter {
   private colors = [0xFFFF00, 0x0000FF, 0xFF0000, 0x00FF00, 0xFF00FF, 0x00FFFF];
   private readonly WORLD_WIDTH = 4000;
   private readonly WORLD_HEIGHT = 4000;
+  private readonly TANK_RADIUS = 20;
+  
+  // Map objects
+  private mapObjects = new Map<string, MapObject>();
   
   // Command tracking for client-side prediction
   private playerCommandIds = new Map<string, number>(); // Latest confirmed command ID per player
@@ -39,6 +44,12 @@ export class Game extends EventEmitter {
 
   constructor() {
     super();
+    // Initialize map objects
+    const mapLayout = generateMapLayout();
+    mapLayout.forEach(obj => {
+      this.mapObjects.set(obj.id, obj);
+    });
+    
     // Game loop
     setInterval(() => {
       this.update();
@@ -117,7 +128,7 @@ export class Game extends EventEmitter {
 
       // Apply the command
       player.rotation = nextCommand.rotation;
-      const speed = 5;
+      const speed = 3.5; // Reduced from 5 (30% reduction for better control)
       let moved = false;
 
       if (nextCommand.direction) {
@@ -157,6 +168,23 @@ export class Game extends EventEmitter {
           }
         });
 
+        // Map object collision check
+        if (!hasCollision) {
+          this.mapObjects.forEach((mapObj) => {
+            if (!hasCollision && circleCollidesWithMapObject(proposedX, proposedY, this.TANK_RADIUS, mapObj)) {
+              // Water and concrete walls block movement
+              if (mapObj.type === MapObjectType.WATER || mapObj.type === MapObjectType.CONCRETE_WALL) {
+                hasCollision = true;
+              }
+              // Brick walls block movement (if not destroyed)
+              if (mapObj.type === MapObjectType.BRICK_WALL && !mapObj.destroyed) {
+                hasCollision = true;
+              }
+              // Trees don't block movement (only visual)
+            }
+          });
+        }
+
         if (!hasCollision) {
           player.x = proposedX;
           player.y = proposedY;
@@ -193,7 +221,7 @@ export class Game extends EventEmitter {
     if (player) {
       player.rotation = rotation;
       if (direction) {
-        const speed = 5;
+        const speed = 3.5; // Reduced from 5 (30% reduction for better control)
         const dirX = Math.sin(rotation);
         const dirY = -Math.cos(rotation);
         let proposedX = player.x;
@@ -223,7 +251,7 @@ export class Game extends EventEmitter {
       x,
       y,
       direction,
-      speed: 10,
+      speed: 5, // Reduced from 10 (50% reduction for more visible bullet travel)
     };
     this.bullets.set(bullet.id, bullet);
     return bullet;
@@ -233,7 +261,12 @@ export class Game extends EventEmitter {
     return {
       players: Array.from(this.players.values()),
       bullets: Array.from(this.bullets.values()),
+      mapObjects: Array.from(this.mapObjects.values()),
     };
+  }
+
+  getMapObjects(): MapObject[] {
+    return Array.from(this.mapObjects.values());
   }
 
   /**
@@ -248,6 +281,7 @@ export class Game extends EventEmitter {
     const state: any = {
       players: Array.from(this.players.values()),
       bullets: Array.from(this.bullets.values()),
+      mapObjects: Array.from(this.mapObjects.values()),
       latestConfirmedCommandId,
     };
 
@@ -280,31 +314,64 @@ export class Game extends EventEmitter {
       if (bullet.x < 0 || bullet.x > this.WORLD_WIDTH || bullet.y < 0 || bullet.y > this.WORLD_HEIGHT) {
         this.bullets.delete(bulletId);
         this.emit('bullet-removed', bulletId);
+        return;
       }
 
-      // Check for collisions
-      this.players.forEach((player) => {
-        if (player.id !== bullet.playerId) {
-          const distance = Math.sqrt(Math.pow(player.x - bullet.x, 2) + Math.pow(player.y - bullet.y, 2));
-          if (distance < 20) { // 20 is the radius of the tank
+      // Check bullet collision with map objects (except water and trees)
+      let bulletHit = false;
+      this.mapObjects.forEach((mapObj) => {
+        if (!bulletHit && pointInMapObject(bullet.x, bullet.y, mapObj)) {
+          // Bullets fly over water (no collision)
+          if (mapObj.type === MapObjectType.WATER || mapObj.type === MapObjectType.TREE) {
+            return;
+          }
+
+          // Bullets hit concrete walls (blocked, no destruction)
+          if (mapObj.type === MapObjectType.CONCRETE_WALL) {
             this.bullets.delete(bulletId);
             this.emit('bullet-removed', bulletId);
-            player.health -= 10;
-            this.emit('health-update', { id: player.id, health: player.health });
+            bulletHit = true;
+            return;
+          }
 
-            if (player.health <= 0) {
-              const killer = this.players.get(bullet.playerId);
-              if (killer) {
-                killer.score += 100;
-                this.saveScore(killer.id, killer.score);
-                this.emit('score-update', { playerId: killer.id, score: killer.score });
-              }
-              this.removePlayer(player.id);
-              this.emit('player-removed', player.id);
-            }
+          // Bullets destroy brick walls
+          if (mapObj.type === MapObjectType.BRICK_WALL && !mapObj.destroyed) {
+            mapObj.destroyed = true;
+            this.bullets.delete(bulletId);
+            this.emit('bullet-removed', bulletId);
+            this.emit('map-update', { objectId: mapObj.id, destroyed: true });
+            bulletHit = true;
+            return;
           }
         }
       });
+
+      // Check for collisions with players (only if bullet didn't hit a wall)
+      if (!bulletHit) {
+        this.players.forEach((player) => {
+          if (player.id !== bullet.playerId) {
+            const distance = Math.sqrt(Math.pow(player.x - bullet.x, 2) + Math.pow(player.y - bullet.y, 2));
+            if (distance < this.TANK_RADIUS) {
+              this.bullets.delete(bulletId);
+              this.emit('bullet-removed', bulletId);
+              player.health -= 10;
+              this.emit('health-update', { id: player.id, health: player.health });
+
+              if (player.health <= 0) {
+                const killer = this.players.get(bullet.playerId);
+                if (killer) {
+                  killer.score += 100;
+                  this.saveScore(killer.id, killer.score);
+                  this.emit('score-update', { playerId: killer.id, score: killer.score });
+                }
+                this.removePlayer(player.id);
+                this.emit('player-removed', player.id);
+              }
+              bulletHit = true;
+            }
+          }
+        });
+      }
     });
 
     // Health regeneration: fully recover in ~40 seconds

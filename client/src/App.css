@@ -91,10 +91,12 @@
 
   .game-section {
     grid-row: 1;
-    justify-content: flex-end; /* Align game to top-right area */
-    align-items: flex-start; /* Align to top */
+    justify-content: center; /* Center the game canvas */
+    align-items: center; /* Center vertically */
     width: 100%;
-    padding-top: 0;
+    padding: 0;
+    height: 100vh; /* Full viewport height */
+    position: relative;
   }
 
   .leaderboard-section {

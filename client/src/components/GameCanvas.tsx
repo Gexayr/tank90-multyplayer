@@ -4,6 +4,7 @@ import WebSocketService from '../services/websocket';
 import { CommandBuffer } from '../game/CommandBuffer';
 import { GameSimulation, TankState } from '../game/GameSimulation';
 import { Camera } from '../game/Camera';
+import { NetworkInterpolation } from '../game/NetworkInterpolation';
 import './GameCanvas.css';
 
 interface Bullet {
@@ -24,6 +25,7 @@ interface Tank {
   score: number;
   color: number;
   highlight?: PIXI.Graphics;
+  interpolation?: NetworkInterpolation; // For remote tanks only
 }
 
 const GameCanvas: React.FC = () => {
@@ -32,6 +34,7 @@ const GameCanvas: React.FC = () => {
   const worldRef = useRef<PIXI.Container | null>(null);
   const tanksRef = useRef<Map<string, Tank>>(new Map());
   const bulletsRef = useRef<Map<string, Bullet>>(new Map());
+  const mapObjectsRef = useRef<Map<string, PIXI.Graphics>>(new Map());
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef<{ [key: string]: boolean }>({});
   // Touch/joystick controls
@@ -77,6 +80,7 @@ const GameCanvas: React.FC = () => {
   // Fixed viewport size - adjust based on your needs (1280x720 is a common game resolution)
   const VIEWPORT_WIDTH = 1280;
   const VIEWPORT_HEIGHT = 720;
+  const ASPECT_RATIO = VIEWPORT_WIDTH / VIEWPORT_HEIGHT; // 16:9
 
   // Create health bar for tank
   const createHealthBar = (tank: Tank) => {
@@ -109,18 +113,42 @@ const GameCanvas: React.FC = () => {
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    // Initialize camera system
+    // Calculate responsive viewport size for mobile
+    const isMobile = window.innerWidth <= 768;
+    let viewportWidth = VIEWPORT_WIDTH;
+    let viewportHeight = VIEWPORT_HEIGHT;
+
+    if (isMobile) {
+      // On mobile, calculate size to fill screen while maintaining aspect ratio
+      const screenWidth = window.innerWidth;
+      const screenHeight = window.innerHeight;
+      
+      // Try width-based scaling first
+      let calculatedWidth = screenWidth;
+      let calculatedHeight = screenWidth / ASPECT_RATIO;
+      
+      // If height-based scaling is smaller, use that instead
+      if (screenHeight / ASPECT_RATIO < calculatedWidth) {
+        calculatedHeight = screenHeight;
+        calculatedWidth = screenHeight * ASPECT_RATIO;
+      }
+      
+      viewportWidth = calculatedWidth;
+      viewportHeight = calculatedHeight;
+    }
+
+    // Initialize camera system (use actual viewport size)
     cameraRef.current = new Camera({
-      viewportWidth: VIEWPORT_WIDTH,
-      viewportHeight: VIEWPORT_HEIGHT,
+      viewportWidth: viewportWidth,
+      viewportHeight: viewportHeight,
       worldWidth: WORLD_WIDTH,
       worldHeight: WORLD_HEIGHT,
     });
 
-    // Create PIXI Application with fixed viewport size
+    // Create PIXI Application with responsive viewport size
     const app = new PIXI.Application({
-      width: VIEWPORT_WIDTH,
-      height: VIEWPORT_HEIGHT,
+      width: viewportWidth,
+      height: viewportHeight,
       backgroundColor: 0x000000,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true, // Handle high DPI displays
@@ -152,6 +180,99 @@ const GameCanvas: React.FC = () => {
     }
     grid.zIndex = -10; // behind everything
     world.addChild(grid);
+
+    // Create map object rendering function
+    const createMapObject = (obj: any) => {
+      if (mapObjectsRef.current.has(obj.id)) {
+        return; // Already exists
+      }
+
+      const sprite = new PIXI.Graphics();
+      sprite.x = obj.x;
+      sprite.y = obj.y;
+      sprite.zIndex = -5; // Behind tanks but above grid
+
+      switch (obj.type) {
+        case 'brick_wall':
+          if (!obj.destroyed) {
+            // Brown/red brick pattern
+            sprite.beginFill(0x8B4513); // Brown
+            sprite.drawRect(0, 0, obj.width, obj.height);
+            sprite.endFill();
+            // Brick pattern lines
+            sprite.lineStyle(1, 0x654321, 0.5);
+            sprite.moveTo(obj.width / 2, 0);
+            sprite.lineTo(obj.width / 2, obj.height);
+            sprite.moveTo(0, obj.height / 2);
+            sprite.lineTo(obj.width, obj.height / 2);
+            sprite.lineStyle(0); // Reset line style
+          }
+          break;
+
+        case 'concrete_wall':
+          // Gray concrete
+          sprite.beginFill(0x808080); // Gray
+          sprite.drawRect(0, 0, obj.width, obj.height);
+          sprite.endFill();
+          // Concrete texture lines
+          sprite.lineStyle(1, 0x606060, 0.3);
+          for (let i = 0; i < 4; i++) {
+            sprite.moveTo((i * obj.width) / 4, 0);
+            sprite.lineTo((i * obj.width) / 4, obj.height);
+          }
+          sprite.lineStyle(0); // Reset line style
+          break;
+
+        case 'water':
+          // Blue water with wave pattern
+          sprite.beginFill(0x4169E1); // Royal blue
+          sprite.drawRect(0, 0, obj.width, obj.height);
+          sprite.endFill();
+          // Wave pattern
+          sprite.lineStyle(1, 0x1E90FF, 0.4);
+          for (let i = 0; i < 3; i++) {
+            const waveY = (obj.height / 3) * (i + 1);
+            sprite.moveTo(0, waveY);
+            for (let x = 0; x <= obj.width; x += 5) {
+              const waveOffset = Math.sin((x / obj.width) * Math.PI * 2) * 2;
+              sprite.lineTo(x, waveY + waveOffset);
+            }
+          }
+          sprite.lineStyle(0); // Reset line style
+          break;
+
+        case 'tree':
+          // Green tree (circle for simplicity)
+          sprite.beginFill(0x228B22); // Forest green
+          sprite.drawCircle(obj.width / 2, obj.height / 2, obj.width / 2 - 2);
+          sprite.endFill();
+          // Tree trunk
+          sprite.beginFill(0x8B4513); // Brown trunk
+          sprite.drawRect(obj.width / 2 - 4, obj.height / 2, 8, obj.height / 2);
+          sprite.endFill();
+          sprite.zIndex = 0.5; // Trees are above ground but tanks can go under
+          break;
+      }
+
+      // Only add to world if not destroyed (for brick walls) or if it's another type
+      if (obj.type === 'brick_wall' && obj.destroyed) {
+        // Don't render destroyed brick walls
+        return;
+      }
+      
+      world.addChild(sprite);
+      mapObjectsRef.current.set(obj.id, sprite);
+    };
+
+    // Update map object (for destruction)
+    const updateMapObject = (objId: string, destroyed: boolean) => {
+      const sprite = mapObjectsRef.current.get(objId);
+      if (sprite) {
+        if (destroyed) {
+          sprite.visible = false;
+        }
+      }
+    };
 
     // Connect to WebSocket server
     wsService.connect();
@@ -213,6 +334,32 @@ const GameCanvas: React.FC = () => {
         ctx.lineTo(2, -2);
         ctx.closePath();
         ctx.fill();
+        ctx.restore();
+      });
+
+      // Draw map objects on minimap
+      mapObjectsRef.current.forEach((sprite, objId) => {
+        if (!sprite.visible) return;
+        
+        const bounds = sprite.getBounds();
+        const objX = bounds.x * MINIMAP_SCALE_X;
+        const objY = bounds.y * MINIMAP_SCALE_Y;
+        const objW = bounds.width * MINIMAP_SCALE_X;
+        const objH = bounds.height * MINIMAP_SCALE_Y;
+        
+        ctx.save();
+        if (objId.startsWith('brick-wall')) {
+          ctx.fillStyle = 'rgba(139, 69, 19, 0.6)'; // Brown
+        } else if (objId.startsWith('concrete')) {
+          ctx.fillStyle = 'rgba(128, 128, 128, 0.6)'; // Gray
+        } else if (objId.startsWith('water')) {
+          ctx.fillStyle = 'rgba(65, 105, 225, 0.5)'; // Blue
+        } else if (objId.startsWith('tree')) {
+          ctx.fillStyle = 'rgba(34, 139, 34, 0.5)'; // Green
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        }
+        ctx.fillRect(objX, objY, objW, objH);
         ctx.restore();
       });
 
@@ -307,6 +454,7 @@ const GameCanvas: React.FC = () => {
       bullet.endFill();
       bullet.x = x;
       bullet.y = y;
+      bullet.zIndex = 2; // Bullets above everything
       (worldRef.current || app.stage).addChild(bullet);
 
       bulletsRef.current.set(id, {
@@ -314,7 +462,7 @@ const GameCanvas: React.FC = () => {
         id,
         playerId,
         direction,
-        speed,
+        speed: speed || 5, // Use provided speed or default to 5 (reduced from 10)
       });
     };
 
@@ -334,6 +482,49 @@ const GameCanvas: React.FC = () => {
             rotation: localTank.rotation,
           };
         }
+      }
+    });
+
+    // Map objects handler
+    wsService.onMapObjects((objects) => {
+      objects.forEach((obj: any) => {
+        createMapObject(obj);
+      });
+    });
+
+    // Map update handler (for destroyed walls)
+    wsService.onMapUpdate((data) => {
+      updateMapObject(data.objectId, data.destroyed);
+    });
+
+    // Also handle map objects from game state
+    wsService.onGameStateUpdate((state) => {
+      // Create tanks for all players
+      state.players.forEach((player: any) => {
+        if (!tanksRef.current.has(player.id)) {
+          createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+        } else {
+          const t = tanksRef.current.get(player.id)!;
+          ensureHighlightState(t);
+        }
+      });
+
+      // Create bullets
+      state.bullets.forEach((bullet: any) => {
+        if (!bulletsRef.current.has(bullet.id)) {
+          const tank = tanksRef.current.get(bullet.playerId);
+          if (tank) {
+            const color = 0xFFFFFF;
+            createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
+          }
+        }
+      });
+
+      // Create map objects if present
+      if (state.mapObjects) {
+        state.mapObjects.forEach((obj: any) => {
+          createMapObject(obj);
+        });
       }
     });
 
@@ -362,12 +553,18 @@ const GameCanvas: React.FC = () => {
       
       const tank = tanksRef.current.get(data.id);
       if (tank) {
-        tank.sprite.x = data.x;
-        tank.sprite.y = data.y;
-        tank.rotation = data.rotation;
-        tank.sprite.rotation = data.rotation;
-        updateHealthBar(tank);
-        ensureHighlightState(tank);
+        // Initialize interpolation if not exists
+        if (!tank.interpolation) {
+          tank.interpolation = new NetworkInterpolation(100);
+        }
+
+        // Add server state to interpolation buffer
+        tank.interpolation.addState({
+          x: data.x,
+          y: data.y,
+          rotation: data.rotation,
+          timestamp: Date.now(),
+        });
       }
     });
 
@@ -399,17 +596,23 @@ const GameCanvas: React.FC = () => {
       const localId = wsService.getSocketId();
       if (!localId) return;
 
-      // Update remote players
+      // Update remote players with interpolation
       data.players.forEach((player: any) => {
         if (player.id !== localId) {
           const tank = tanksRef.current.get(player.id);
           if (tank) {
-            tank.sprite.x = player.x;
-            tank.sprite.y = player.y;
-            tank.rotation = player.rotation;
-            tank.sprite.rotation = player.rotation;
-            updateHealthBar(tank);
-            ensureHighlightState(tank);
+            // Initialize interpolation if not exists
+            if (!tank.interpolation) {
+              tank.interpolation = new NetworkInterpolation(100);
+            }
+
+            // Add server state to interpolation buffer
+            tank.interpolation.addState({
+              x: player.x,
+              y: player.y,
+              rotation: player.rotation,
+              timestamp: Date.now(),
+            });
           }
         }
       });
@@ -507,10 +710,16 @@ const GameCanvas: React.FC = () => {
 
     // Keyboard event listeners
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore period key to prevent interference with game controls
+      if (e.key === '.' || e.key === 'Period') {
+        e.preventDefault();
+        return;
+      }
+
       keysRef.current[e.key] = true;
 
-      // Handle shooting
-      if (e.key === ' ' && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
+      // Handle shooting (Spacebar or F key)
+      if ((e.key === ' ' || e.key === 'f' || e.key === 'F') && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
         const localId = wsService.getSocketId();
         const localTank = localId ? tanksRef.current.get(localId) : null;
         if (localTank && localTankStateRef.current) {
@@ -526,6 +735,10 @@ const GameCanvas: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      // Ignore period key
+      if (e.key === '.' || e.key === 'Period') {
+        return;
+      }
       keysRef.current[e.key] = false;
     };
 
@@ -535,14 +748,15 @@ const GameCanvas: React.FC = () => {
     // Game loop with client-side prediction
     const gameLoop = () => {
       // Update local player with immediate prediction
-      const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-      if (localTank) {
+      const localId = wsService.getSocketId();
+      const localTankLoop = localId ? tanksRef.current.get(localId) : null;
+      if (localTankLoop) {
         // Initialize local state if not set
         if (!localTankStateRef.current) {
           localTankStateRef.current = {
-            x: localTank.sprite.x,
-            y: localTank.sprite.y,
-            rotation: localTank.rotation,
+            x: localTankLoop.sprite.x,
+            y: localTankLoop.sprite.y,
+            rotation: localTankLoop.rotation,
           };
         }
 
@@ -596,22 +810,105 @@ const GameCanvas: React.FC = () => {
             );
 
             // Update visual representation immediately
-            localTank.sprite.x = localTankStateRef.current.x;
-            localTank.sprite.y = localTankStateRef.current.y;
-            localTank.rotation = localTankStateRef.current.rotation;
-            localTank.sprite.rotation = localTankStateRef.current.rotation;
-            updateHealthBar(localTank);
-            ensureHighlightState(localTank);
+            localTankLoop.sprite.x = localTankStateRef.current.x;
+            localTankLoop.sprite.y = localTankStateRef.current.y;
+            localTankLoop.rotation = localTankStateRef.current.rotation;
+            localTankLoop.sprite.rotation = localTankStateRef.current.rotation;
+            updateHealthBar(localTankLoop);
+            ensureHighlightState(localTankLoop);
           }
 
           // Send command to server (only input data + command ID)
           wsService.sendPlayerMove(commandId, newRotation, direction);
         } else if (localTankStateRef.current) {
           // Keep visual in sync with predicted state even when no new input
-          localTank.sprite.x = localTankStateRef.current.x;
-          localTank.sprite.y = localTankStateRef.current.y;
-          localTank.rotation = localTankStateRef.current.rotation;
-          localTank.sprite.rotation = localTankStateRef.current.rotation;
+          localTankLoop.sprite.x = localTankStateRef.current.x;
+          localTankLoop.sprite.y = localTankStateRef.current.y;
+          localTankLoop.rotation = localTankStateRef.current.rotation;
+          localTankLoop.sprite.rotation = localTankStateRef.current.rotation;
+        }
+      }
+
+      // Update remote tanks with interpolation and tree transparency
+      const currentTime = Date.now();
+      const localIdForInterpolation = wsService.getSocketId();
+      tanksRef.current.forEach((tank) => {
+        // Skip local tank (uses prediction)
+        if (tank.id === localIdForInterpolation) {
+          return;
+        }
+
+        // Apply interpolation for remote tanks
+        if (tank.interpolation) {
+          const interpolated = tank.interpolation.getInterpolatedState(currentTime);
+          if (interpolated) {
+            tank.sprite.x = interpolated.x;
+            tank.sprite.y = interpolated.y;
+            tank.rotation = interpolated.rotation;
+            tank.sprite.rotation = interpolated.rotation;
+            updateHealthBar(tank);
+            ensureHighlightState(tank);
+          }
+
+          // Clean up old interpolation states
+          tank.interpolation.clearOldStates(currentTime, 1000);
+        }
+
+        // Check if tank is under a tree (for transparency)
+        let underTree = false;
+        mapObjectsRef.current.forEach((treeSprite, objId) => {
+          if (objId.startsWith('tree-') && treeSprite.visible) {
+            // Simple collision check - if tank center is within tree bounds
+            const treeBounds = treeSprite.getBounds();
+            const tankCenterX = tank.sprite.x;
+            const tankCenterY = tank.sprite.y;
+            if (tankCenterX >= treeBounds.x && tankCenterX < treeBounds.x + treeBounds.width &&
+                tankCenterY >= treeBounds.y && tankCenterY < treeBounds.y + treeBounds.height) {
+              underTree = true;
+            }
+          }
+        });
+
+        // Apply transparency if under tree
+        if (underTree) {
+          tank.sprite.alpha = 0.5;
+          if (tank.highlight) {
+            tank.highlight.alpha = 0.5;
+          }
+        } else {
+          tank.sprite.alpha = 1.0;
+          if (tank.highlight) {
+            tank.highlight.alpha = 1.0;
+          }
+        }
+      });
+
+      // Also check local tank for tree transparency
+      const localTank = localId ? tanksRef.current.get(localId) : null;
+      if (localTank && localTankStateRef.current) {
+        let underTree = false;
+        mapObjectsRef.current.forEach((treeSprite, objId) => {
+          if (objId.startsWith('tree-') && treeSprite.visible) {
+            const treeBounds = treeSprite.getBounds();
+            const tankCenterX = localTankStateRef.current!.x;
+            const tankCenterY = localTankStateRef.current!.y;
+            if (tankCenterX >= treeBounds.x && tankCenterX < treeBounds.x + treeBounds.width &&
+                tankCenterY >= treeBounds.y && tankCenterY < treeBounds.y + treeBounds.height) {
+              underTree = true;
+            }
+          }
+        });
+
+        if (underTree) {
+          localTank.sprite.alpha = 0.5;
+          if (localTank.highlight) {
+            localTank.highlight.alpha = 0.5;
+          }
+        } else {
+          localTank.sprite.alpha = 1.0;
+          if (localTank.highlight) {
+            localTank.highlight.alpha = 1.0;
+          }
         }
       }
 
@@ -659,12 +956,35 @@ const GameCanvas: React.FC = () => {
       drawMinimap();
     };
 
-    // Resize handler - maintain fixed viewport but scale canvas if needed
-    // Note: We keep fixed viewport size, but can scale the canvas element via CSS
+    // Resize handler - responsive viewport on mobile
     const handleResize = () => {
-      // Optionally: Update camera viewport if you want it to scale
-      // For now, we keep fixed viewport size
-      // app.renderer.resize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+      const isMobileNow = window.innerWidth <= 768;
+      if (isMobileNow && appRef.current) {
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        
+        // Calculate size to fill screen while maintaining aspect ratio
+        let calculatedWidth = screenWidth;
+        let calculatedHeight = screenWidth / ASPECT_RATIO;
+        
+        if (screenHeight / ASPECT_RATIO < calculatedWidth) {
+          calculatedHeight = screenHeight;
+          calculatedWidth = screenHeight * ASPECT_RATIO;
+        }
+        
+        appRef.current.renderer.resize(calculatedWidth, calculatedHeight);
+        
+        // Update camera viewport size
+        if (cameraRef.current) {
+          cameraRef.current.setViewportSize(calculatedWidth, calculatedHeight);
+        }
+      } else if (!isMobileNow && appRef.current) {
+        // Desktop: use fixed size
+        appRef.current.renderer.resize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+        if (cameraRef.current) {
+          cameraRef.current.setViewportSize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+        }
+      }
     };
     window.addEventListener('resize', handleResize);
 
@@ -695,10 +1015,6 @@ const GameCanvas: React.FC = () => {
       <div
         ref={canvasRef}
         className="game-canvas-container"
-        style={{
-          width: `${VIEWPORT_WIDTH}px`,
-          height: `${VIEWPORT_HEIGHT}px`,
-        }}
       />
       <div
         className="score-display"

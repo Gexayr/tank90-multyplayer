@@ -17,7 +17,7 @@ export interface MovementCommand {
 }
 
 export class GameSimulation {
-  private readonly SPEED = 5;
+  private readonly SPEED = 3.5; // Reduced from 5 (30% reduction to match server)
   private readonly ROTATION_SPEED = 0.1;
   private readonly WORLD_WIDTH = 4000;
   private readonly WORLD_HEIGHT = 4000;
