@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import './Leaderboard.css';
 
 interface Score {
   playerId: string;
@@ -8,6 +9,21 @@ interface Score {
 const Leaderboard: React.FC = () => {
   const [scores, setScores] = useState<Score[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+      // Auto-expand on desktop
+      if (window.innerWidth > 768) {
+        setIsExpanded(true);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
@@ -34,24 +50,34 @@ const Leaderboard: React.FC = () => {
   }, []);
 
   return (
-    <div style={{
-      width: '300px',
-      margin: '20px auto',
-      padding: '20px',
-      backgroundColor: '#2a2a2a',
-      borderRadius: '8px',
-      color: 'white'
-    }}>
-      <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>Leaderboard</h2>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      <ol style={{ paddingLeft: '20px' }}>
-        {scores.map((score, index) => (
-          <li key={index} style={{ marginBottom: '10px' }}>
-            <span>{score.playerId}</span>
-            <span style={{ float: 'right' }}>{score.score}</span>
-          </li>
-        ))}
-      </ol>
+    <div className="leaderboard-container">
+      <div className="leaderboard-header">
+        <h2>Leaderboard</h2>
+        <button 
+          className="leaderboard-toggle mobile-only"
+          onClick={() => setIsExpanded(!isExpanded)}
+          aria-label={isExpanded ? 'Collapse leaderboard' : 'Expand leaderboard'}
+        >
+          {isExpanded ? '−' : '+'}
+        </button>
+      </div>
+      {(isExpanded || !isMobile) && (
+        <div className="leaderboard-content">
+          {error && <p className="leaderboard-error">{error}</p>}
+          {scores.length === 0 && !error && (
+            <p className="leaderboard-empty">No scores yet</p>
+          )}
+          <ol className="leaderboard-list">
+            {scores.map((score, index) => (
+              <li key={index} className="leaderboard-item">
+                <span className="leaderboard-rank">{index + 1}.</span>
+                <span className="leaderboard-player">{score.playerId}</span>
+                <span className="leaderboard-score">{score.score}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </div>
   );
 };

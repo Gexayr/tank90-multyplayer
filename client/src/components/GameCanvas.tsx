@@ -4,6 +4,7 @@ import WebSocketService from '../services/websocket';
 import { CommandBuffer } from '../game/CommandBuffer';
 import { GameSimulation, TankState } from '../game/GameSimulation';
 import { Camera } from '../game/Camera';
+import './GameCanvas.css';
 
 interface Bullet {
   sprite: PIXI.Graphics;
@@ -690,28 +691,17 @@ const GameCanvas: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ 
-      position: 'relative',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      width: '100vw',
-      height: '100vh',
-      overflow: 'hidden',
-      backgroundColor: '#000'
-    }}>
+    <div className="game-canvas-wrapper">
       <div
         ref={canvasRef}
+        className="game-canvas-container"
         style={{
           width: `${VIEWPORT_WIDTH}px`,
           height: `${VIEWPORT_HEIGHT}px`,
-          margin: '0 auto',
-          border: '2px solid #333',
-          // Prevent scrollbars by ensuring canvas doesn't exceed viewport
-          boxSizing: 'border-box'
         }}
       />
       <div
+        className="score-display"
         style={{
           position: 'absolute',
           top: '10px',
@@ -720,6 +710,8 @@ const GameCanvas: React.FC = () => {
           color: 'white',
           fontSize: '20px',
           textShadow: '2px 2px 2px black',
+          zIndex: 1002,
+          pointerEvents: 'none',
         }}
       >
         Score: {localScore}
@@ -777,6 +769,7 @@ const GameCanvas: React.FC = () => {
               joystickVecRef.current = { x: 0, y: 0 };
               // Movement will be handled in game loop, no need to send here
             }}
+            className="mobile-joystick"
             style={{
               position: 'fixed',
               left: 20,
@@ -821,10 +814,10 @@ const GameCanvas: React.FC = () => {
                 lastShotTimeRef.current = Date.now();
               }
             }}
+            className="mobile-fire-button"
             style={{
               position: 'fixed',
-              right: 20,
-              bottom: 30,
+              bottom: 20,
               width: SHOOT_BTN_SIZE,
               height: SHOOT_BTN_SIZE,
               borderRadius: SHOOT_BTN_SIZE / 2,
