@@ -1,6 +1,9 @@
 import Score from '../models/Score';
 import { EventEmitter } from 'events';
 import { MapObject, MapObjectType, generateMapLayout, circleCollidesWithMapObject, pointInMapObject } from './MapObject';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export interface Player {
   id: string;
@@ -44,8 +47,17 @@ export class Game extends EventEmitter {
 
   constructor() {
     super();
-    // Initialize map objects
-    const mapLayout = generateMapLayout();
+    // Initialize map objects based on environment variable
+    // ADD_MAP_OBJECTS defaults to true if not set (backward compatibility)
+    const addMapObjects = process.env.ADD_MAP_OBJECTS !== undefined 
+      ? process.env.ADD_MAP_OBJECTS.toLowerCase() === 'true'
+      : true;
+
+      console.log("process.env.ADD_MAP_OBJECTS")
+      console.log(process.env.ADD_MAP_OBJECTS)
+      console.log(addMapObjects)
+
+    const mapLayout = generateMapLayout(addMapObjects);
     mapLayout.forEach(obj => {
       this.mapObjects.set(obj.id, obj);
     });

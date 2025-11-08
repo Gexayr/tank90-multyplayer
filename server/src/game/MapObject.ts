@@ -21,12 +21,18 @@ export interface MapObject {
 
 /**
  * Generate a default map layout
+ * @param addMapObjects - If false, returns an empty array (clear map). If true, generates all map objects.
  */
-export function generateMapLayout(): MapObject[] {
+export function generateMapLayout(addMapObjects: boolean = false): MapObject[] {
   const objects: MapObject[] = [];
   const WORLD_WIDTH = 4000;
   const WORLD_HEIGHT = 4000;
   const CELL_SIZE = 40;
+
+  // If map objects are disabled, return empty array (completely clear map)
+  if (addMapObjects) {
+    return objects;
+  }
 
   // Add border walls (concrete - indestructible)
   // Top and bottom borders
