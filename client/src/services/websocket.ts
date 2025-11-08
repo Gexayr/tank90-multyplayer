@@ -16,10 +16,12 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
-    // Configure Socket.IO to prefer WebSocket but allow polling fallback
+    
+    // Start with polling for better compatibility, then upgrade to WebSocket automatically
     // This ensures connection works even if WebSocket is blocked by proxies/firewalls
+    // Polling is more reliable across different network configurations
     this.socket = io(this.SERVER_URL, {
-      transports: ['websocket', 'polling'], // Try WebSocket first, fallback to polling if needed
+      transports: ['polling', 'websocket'], // Try polling first for reliability, then upgrade to WebSocket
       upgrade: true, // Allow automatic upgrade from polling to WebSocket when available
       reconnection: true,
       reconnectionDelay: 1000,
@@ -27,18 +29,27 @@ class WebSocketService {
       reconnectionAttempts: 10, // More attempts for better reliability
       timeout: 20000, // 20 second connection timeout
       forceNew: false, // Reuse existing connection if available
+      // Additional options for better connection handling
+      autoConnect: true,
+      rememberUpgrade: true, // Remember successful WebSocket upgrade for future connections
     });
 
     this.socket.on('connect', () => {
-      console.log('Connected to server via', this.socket?.io.engine.transport.name);
+      const transport = this.socket?.io.engine.transport.name;
+      console.log('✅ Connected to server via', transport);
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('Disconnected from server:', reason);
+      console.log('❌ Disconnected from server:', reason);
     });
 
     this.socket.on('connect_error', (error: Error) => {
-      console.error('Connection error:', error.message);
+      console.error('⚠️ Connection error:', error.message);
+    });
+
+    // Monitor transport upgrades (when polling successfully upgrades to WebSocket)
+    this.socket.io.engine.on('upgrade', () => {
+      console.log('⬆️ Transport upgraded to:', this.socket?.io.engine.transport.name);
     });
   }
 
