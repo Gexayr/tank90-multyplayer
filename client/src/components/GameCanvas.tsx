@@ -574,13 +574,31 @@ const GameCanvas: React.FC = () => {
       }
     });
 
-    // NOTE: onPlayerMove handler is no longer used
-    // The server no longer broadcasts per-command player-move events to reduce network traffic.
-    // Remote players now receive updates exclusively through the periodic state-update events
-    // (20 Hz) which include all players' positions and use network interpolation for smoothness.
-    // This handler is kept for potential future use but is currently inactive.
-    // 
-    // wsService.onPlayerMove((data) => { ... });
+    // Handle player move for remote players only (local player uses prediction)
+    wsService.onPlayerMove((data) => {
+      const localId = wsService.getSocketId();
+      // Skip if this is the local player - we use prediction instead
+      if (data.id === localId) {
+        return;
+      }
+      
+      const tank = tanksRef.current.get(data.id);
+      if (tank) {
+        // Initialize interpolation if not exists
+        if (!tank.interpolation) {
+          tank.interpolation = new NetworkInterpolation(100); // 100ms interpolation delay
+        }
+
+        // Add server state to interpolation buffer with high-precision timestamp
+        // Use performance.now() for better accuracy than Date.now()
+        tank.interpolation.addState({
+          x: data.x,
+          y: data.y,
+          rotation: data.rotation,
+          timestamp: performance.now(), // High-precision timestamp
+        });
+      }
+    });
 
     wsService.onGameStateUpdate((state) => {
       // Create tanks for all players
