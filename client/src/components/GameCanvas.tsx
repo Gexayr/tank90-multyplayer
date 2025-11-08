@@ -429,6 +429,9 @@ const GameCanvas: React.FC = () => {
       tank.zIndex = 1;
       (worldRef.current || app.stage).addChild(tank);
 
+      const localId = wsService.getSocketId();
+      const isLocal = localId && id === localId;
+
       const newTank: Tank = {
         sprite: tank,
         rotation: 0,
@@ -438,6 +441,8 @@ const GameCanvas: React.FC = () => {
         healthBar: new PIXI.Graphics(),
         score,
         color,
+        // Initialize interpolation for remote tanks only
+        interpolation: isLocal ? undefined : new NetworkInterpolation(100),
       };
       newTank.healthBar = createHealthBar(newTank);
 
@@ -499,13 +504,39 @@ const GameCanvas: React.FC = () => {
 
     // Also handle map objects from game state
     wsService.onGameStateUpdate((state) => {
+      const localId = wsService.getSocketId();
+      const updateTimestamp = performance.now();
+      
       // Create tanks for all players
       state.players.forEach((player: any) => {
         if (!tanksRef.current.has(player.id)) {
           createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+          // For newly created remote tanks, add initial state to interpolation buffer
+          if (player.id !== localId) {
+            const t = tanksRef.current.get(player.id);
+            if (t && t.interpolation) {
+              t.interpolation.addState({
+                x: player.x,
+                y: player.y,
+                rotation: player.rotation,
+                timestamp: updateTimestamp,
+              });
+            }
+          }
         } else {
           const t = tanksRef.current.get(player.id)!;
           ensureHighlightState(t);
+          
+          // For remote players, add their state to interpolation buffer
+          // This ensures state updates are interpolated smoothly
+          if (player.id !== localId && t.interpolation) {
+            t.interpolation.addState({
+              x: player.x,
+              y: player.y,
+              rotation: player.rotation,
+              timestamp: updateTimestamp,
+            });
+          }
         }
       });
 
@@ -555,15 +586,16 @@ const GameCanvas: React.FC = () => {
       if (tank) {
         // Initialize interpolation if not exists
         if (!tank.interpolation) {
-          tank.interpolation = new NetworkInterpolation(100);
+          tank.interpolation = new NetworkInterpolation(100); // 100ms interpolation delay
         }
 
-        // Add server state to interpolation buffer
+        // Add server state to interpolation buffer with high-precision timestamp
+        // Use performance.now() for better accuracy than Date.now()
         tank.interpolation.addState({
           x: data.x,
           y: data.y,
           rotation: data.rotation,
-          timestamp: Date.now(),
+          timestamp: performance.now(), // High-precision timestamp
         });
       }
     });
@@ -596,6 +628,9 @@ const GameCanvas: React.FC = () => {
       const localId = wsService.getSocketId();
       if (!localId) return;
 
+      // Capture timestamp once for all players in this update (ensures consistency)
+      const updateTimestamp = performance.now();
+
       // Update remote players with interpolation
       data.players.forEach((player: any) => {
         if (player.id !== localId) {
@@ -603,15 +638,16 @@ const GameCanvas: React.FC = () => {
           if (tank) {
             // Initialize interpolation if not exists
             if (!tank.interpolation) {
-              tank.interpolation = new NetworkInterpolation(100);
+              tank.interpolation = new NetworkInterpolation(100); // 100ms interpolation delay
             }
 
-            // Add server state to interpolation buffer
+            // Add server state to interpolation buffer with high-precision timestamp
+            // All players in the same update get the same timestamp for consistency
             tank.interpolation.addState({
               x: player.x,
               y: player.y,
               rotation: player.rotation,
-              timestamp: Date.now(),
+              timestamp: updateTimestamp, // High-precision timestamp, consistent for all players
             });
           }
         }
@@ -830,7 +866,8 @@ const GameCanvas: React.FC = () => {
       }
 
       // Update remote tanks with interpolation and tree transparency
-      const currentTime = Date.now();
+      // Use performance.now() for high-precision timing (better for smooth animation)
+      const currentTime = performance.now();
       const localIdForInterpolation = wsService.getSocketId();
       tanksRef.current.forEach((tank) => {
         // Skip local tank (uses prediction)
@@ -840,8 +877,10 @@ const GameCanvas: React.FC = () => {
 
         // Apply interpolation for remote tanks
         if (tank.interpolation) {
+          // Get interpolated state at current time (with delay built into interpolation)
           const interpolated = tank.interpolation.getInterpolatedState(currentTime);
           if (interpolated) {
+            // Smoothly update visual position using interpolated state
             tank.sprite.x = interpolated.x;
             tank.sprite.y = interpolated.y;
             tank.rotation = interpolated.rotation;
@@ -850,8 +889,13 @@ const GameCanvas: React.FC = () => {
             ensureHighlightState(tank);
           }
 
-          // Clean up old interpolation states
-          tank.interpolation.clearOldStates(currentTime, 1000);
+          // Clean up old interpolation states (keep last 2 seconds of history)
+          // This prevents memory buildup while maintaining enough history for smooth interpolation
+          tank.interpolation.clearOldStates(currentTime, 2000);
+        } else {
+          // If interpolation is not initialized, initialize it
+          // This can happen if a tank was created before interpolation was set up
+          tank.interpolation = new NetworkInterpolation(100);
         }
 
         // Check if tank is under a tree (for transparency)
