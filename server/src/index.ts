@@ -15,7 +15,12 @@ const io = new Server(httpServer, {
   cors: {
     origin: process.env.FRONT_URI || "http://localhost:5173",
     methods: ["GET", "POST"]
-  }
+  },
+  // Configure Socket.IO to prefer WebSocket transport
+  transports: ['websocket'], // Only allow WebSocket connections, no polling
+  allowEIO3: true, // Allow Engine.IO v3 clients for compatibility
+  pingTimeout: 60000, // 60 seconds
+  pingInterval: 25000, // 25 seconds
 });
 
 app.use(cors());
@@ -76,16 +81,10 @@ io.on('connection', (socket) => {
       socket.emit('state-update', stateUpdate);
     }
 
-    // Broadcast movement to other players (without command confirmation)
-    const player = game.getGameState().players.find(p => p.id === socket.id);
-    if (player) {
-      socket.broadcast.emit('player-move', {
-        id: socket.id,
-        x: player.x,
-        y: player.y,
-        rotation: player.rotation
-      });
-    }
+    // REMOVED: Per-command player-move broadcast
+    // This was causing excessive network traffic (potentially 60+ broadcasts per second)
+    // Remote players now receive updates only through the periodic state-update broadcasts
+    // which are throttled to 20-30 Hz and include all players' positions efficiently
   });
 
   // Handle player shooting
@@ -132,14 +131,29 @@ game.on('map-update', (data) => {
 });
 
 // Periodic state updates with command confirmations
-// Send state updates to all players at regular intervals
+// Send state updates to all players at a controlled rate (20-30 Hz)
+// This is the primary mechanism for synchronizing game state to clients
+// All players receive the same state update, reducing redundant broadcasts
+const STATE_UPDATE_FREQUENCY = 20; // 20 Hz (50ms interval) - balanced between smoothness and network efficiency
+let lastStateUpdate = 0;
+const stateUpdateInterval = 1000 / STATE_UPDATE_FREQUENCY; // 50ms
+
 setInterval(() => {
-  const gameState = game.getGameState();
-  gameState.players.forEach((player) => {
-    const stateUpdate = game.getStateUpdate(player.id, false); // Don't include full state unless needed
-    io.to(player.id).emit('state-update', stateUpdate);
-  });
-}, 1000 / 20); // 20 updates per second (50ms interval)
+  const now = Date.now();
+  // Throttle to ensure we don't exceed target frequency
+  if (now - lastStateUpdate >= stateUpdateInterval) {
+    const gameState = game.getGameState();
+    
+    // Send a single state update to all players (more efficient than per-player)
+    // Each player's state update includes their command confirmation
+    gameState.players.forEach((player) => {
+      const stateUpdate = game.getStateUpdate(player.id, false); // Don't include full state unless needed
+      io.to(player.id).emit('state-update', stateUpdate);
+    });
+    
+    lastStateUpdate = now;
+  }
+}, 16); // Check every 16ms (60 FPS), but only send at 20 Hz
 
 
 httpServer.listen(PORT, () => {

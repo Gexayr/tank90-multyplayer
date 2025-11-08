@@ -16,14 +16,24 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
-    this.socket = io(this.SERVER_URL);
-
-    this.socket.on('connect', () => {
-      console.log('Connected to server');
+    // Configure Socket.IO to aggressively prefer WebSocket transport
+    // This prevents fallback to inefficient HTTP long-polling
+    this.socket = io(this.SERVER_URL, {
+      transports: ['websocket'], // Only use WebSocket, no polling fallback
+      upgrade: false, // Disable automatic transport upgrades (we only want WS)
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5,
+      timeout: 20000, // 20 second connection timeout
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('Disconnected from server');
+    this.socket.on('connect', () => {
+      console.log('Connected to server via', this.socket?.io.engine.transport.name);
+    });
+
+    this.socket.on('disconnect', (reason) => {
+      console.log('Disconnected from server:', reason);
     });
 
     this.socket.on('connect_error', (error: Error) => {
