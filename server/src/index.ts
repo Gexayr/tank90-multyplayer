@@ -58,12 +58,25 @@ io.on('connection', (socket) => {
   // Notify other players about the new player
   socket.broadcast.emit('player-join', player);
 
-  // Handle player movement
-  socket.on('player-move', (data: { x: number; y: number; rotation: number, direction?: 'forward' | 'backward' }) => {
-    game.movePlayer(socket.id, data.x, data.y, data.rotation, data.direction);
+  // Handle player movement with command ID
+  socket.on('player-move', (data: { commandId: number; rotation: number; direction?: 'forward' | 'backward' }) => {
+    const result = game.processPlayerCommand(
+      socket.id,
+      data.commandId,
+      data.rotation,
+      data.direction
+    );
+
+    // If collision occurred, send authoritative state update to the player
+    if (result.collided) {
+      const stateUpdate = game.getStateUpdate(socket.id, true); // Include authoritative state
+      socket.emit('state-update', stateUpdate);
+    }
+
+    // Broadcast movement to other players (without command confirmation)
     const player = game.getGameState().players.find(p => p.id === socket.id);
     if (player) {
-      io.emit('player-move', {
+      socket.broadcast.emit('player-move', {
         id: socket.id,
         x: player.x,
         y: player.y,
@@ -76,6 +89,10 @@ io.on('connection', (socket) => {
   socket.on('player-shoot', (data: { x: number; y: number; direction: { x: number; y: number } }) => {
     const bullet = game.createBullet(socket.id, data.x, data.y, data.direction);
     io.emit('bullet-create', bullet);
+    
+    // Shooting is a significant event, send authoritative state update
+    const stateUpdate = game.getStateUpdate(socket.id, true);
+    socket.emit('state-update', stateUpdate);
   });
 
   // Handle disconnection
@@ -93,6 +110,10 @@ game.on('bullet-removed', (bulletId) => {
 
 game.on('health-update', (data) => {
   io.emit('health-update', data);
+  
+  // Send authoritative state update to the affected player (health change is significant event)
+  const stateUpdate = game.getStateUpdate(data.id, true);
+  io.to(data.id).emit('state-update', stateUpdate);
 });
 
 game.on('score-update', (data) => {
@@ -102,6 +123,16 @@ game.on('score-update', (data) => {
 game.on('player-removed', (playerId) => {
   io.emit('player-leave', playerId);
 });
+
+// Periodic state updates with command confirmations
+// Send state updates to all players at regular intervals
+setInterval(() => {
+  const gameState = game.getGameState();
+  gameState.players.forEach((player) => {
+    const stateUpdate = game.getStateUpdate(player.id, false); // Don't include full state unless needed
+    io.to(player.id).emit('state-update', stateUpdate);
+  });
+}, 1000 / 20); // 20 updates per second (50ms interval)
 
 
 httpServer.listen(PORT, () => {

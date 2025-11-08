@@ -27,6 +27,15 @@ export class Game extends EventEmitter {
   private colors = [0xFFFF00, 0x0000FF, 0xFF0000, 0x00FF00, 0xFF00FF, 0x00FFFF];
   private readonly WORLD_WIDTH = 4000;
   private readonly WORLD_HEIGHT = 4000;
+  
+  // Command tracking for client-side prediction
+  private playerCommandIds = new Map<string, number>(); // Latest confirmed command ID per player
+  private playerPendingCommands = new Map<string, Array<{
+    commandId: number;
+    rotation: number;
+    direction?: 'forward' | 'backward';
+    timestamp: number;
+  }>>(); // Pending commands queue per player
 
   constructor() {
     super();
@@ -48,29 +57,145 @@ export class Game extends EventEmitter {
       score: 0,
     };
     this.players.set(id, player);
+    this.playerCommandIds.set(id, 0);
+    this.playerPendingCommands.set(id, []);
     return player;
   }
 
   removePlayer(id: string) {
     this.players.delete(id);
+    this.playerCommandIds.delete(id);
+    this.playerPendingCommands.delete(id);
   }
 
-  movePlayer(id: string, x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
+  /**
+   * Process player movement command with command ID
+   * Commands are processed sequentially to maintain authoritative state
+   */
+  processPlayerCommand(
+    id: string,
+    commandId: number,
+    rotation: number,
+    direction?: 'forward' | 'backward'
+  ): { success: boolean; collided: boolean } {
     const player = this.players.get(id);
-    if (player) {
-      player.rotation = rotation;
-      const speed = 5;
+    if (!player) {
+      return { success: false, collided: false };
+    }
 
-      // If direction provided, compute proposed movement server-side
-      if (direction) {
-        const dirX = Math.sin(rotation);
-        const dirY = -Math.cos(rotation);
+    // Get pending commands queue
+    const pendingCommands = this.playerPendingCommands.get(id) || [];
+    const latestConfirmedId = this.playerCommandIds.get(id) || 0;
+
+    // Ignore commands that are older than the latest confirmed (out of order)
+    if (commandId <= latestConfirmedId) {
+      return { success: false, collided: false };
+    }
+
+    // Add to pending queue if not already there
+    const existingIndex = pendingCommands.findIndex(cmd => cmd.commandId === commandId);
+    if (existingIndex === -1) {
+      pendingCommands.push({
+        commandId,
+        rotation,
+        direction,
+        timestamp: Date.now(),
+      });
+      // Sort by command ID to process in order
+      pendingCommands.sort((a, b) => a.commandId - b.commandId);
+    }
+
+    // Process commands sequentially
+    let collided = false;
+    while (pendingCommands.length > 0) {
+      const nextCommand = pendingCommands[0];
+      
+      // Only process if this is the next expected command
+      if (nextCommand.commandId !== latestConfirmedId + 1) {
+        break;
+      }
+
+      // Apply the command
+      player.rotation = nextCommand.rotation;
+      const speed = 5;
+      let moved = false;
+
+      if (nextCommand.direction) {
+        const dirX = Math.sin(player.rotation);
+        const dirY = -Math.cos(player.rotation);
 
         // Save original position
         const originalX = player.x;
         const originalY = player.y;
 
         // Compute proposed new position
+        let proposedX = player.x;
+        let proposedY = player.y;
+        if (nextCommand.direction === 'forward') {
+          proposedX += dirX * speed;
+          proposedY += dirY * speed;
+        } else {
+          proposedX -= dirX * speed;
+          proposedY -= dirY * speed;
+        }
+
+        // Keep within bounds
+        proposedX = Math.max(20, Math.min(proposedX, this.WORLD_WIDTH - 20));
+        proposedY = Math.max(20, Math.min(proposedY, this.WORLD_HEIGHT - 20));
+
+        // Tank-tank collision check
+        const minDistance = 40;
+        let hasCollision = false;
+        this.players.forEach((other) => {
+          if (other.id !== id && !hasCollision) {
+            const dx = other.x - proposedX;
+            const dy = other.y - proposedY;
+            const dist = Math.hypot(dx, dy);
+            if (dist < minDistance) {
+              hasCollision = true;
+            }
+          }
+        });
+
+        if (!hasCollision) {
+          player.x = proposedX;
+          player.y = proposedY;
+          moved = true;
+        } else {
+          // Collision occurred - keep original position
+          player.x = originalX;
+          player.y = originalY;
+          collided = true;
+        }
+      } else {
+        // Rotation only, no movement
+        moved = true;
+      }
+
+      // Mark command as confirmed
+      this.playerCommandIds.set(id, nextCommand.commandId);
+      pendingCommands.shift();
+
+      // If collision occurred, stop processing further commands
+      if (collided) {
+        break;
+      }
+    }
+
+    return { success: true, collided };
+  }
+
+  /**
+   * Legacy method for backward compatibility (deprecated)
+   */
+  movePlayer(id: string, x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
+    const player = this.players.get(id);
+    if (player) {
+      player.rotation = rotation;
+      if (direction) {
+        const speed = 5;
+        const dirX = Math.sin(rotation);
+        const dirY = -Math.cos(rotation);
         let proposedX = player.x;
         let proposedY = player.y;
         if (direction === 'forward') {
@@ -80,35 +205,11 @@ export class Game extends EventEmitter {
           proposedX -= dirX * speed;
           proposedY -= dirY * speed;
         }
-
-        // Keep within bounds first
         proposedX = Math.max(20, Math.min(proposedX, this.WORLD_WIDTH - 20));
         proposedY = Math.max(20, Math.min(proposedY, this.WORLD_HEIGHT - 20));
-
-        // Tank-tank collision: prevent overlapping with other players (circle approx, radius 20)
-        const minDistance = 40; // two radii
-        let collides = false;
-        this.players.forEach((other) => {
-          if (other.id !== id && !collides) {
-            const dx = other.x - proposedX;
-            const dy = other.y - proposedY;
-            const dist = Math.hypot(dx, dy);
-            if (dist < minDistance) {
-              collides = true;
-            }
-          }
-        });
-
-        if (!collides) {
-          player.x = proposedX;
-          player.y = proposedY;
-        } else {
-          // Reject movement; keep original position
-          player.x = originalX;
-          player.y = originalY;
-        }
+        player.x = proposedX;
+        player.y = proposedY;
       } else {
-        // No directional intent: accept provided position (used for rotation-only updates)
         player.x = x;
         player.y = y;
       }
@@ -133,6 +234,40 @@ export class Game extends EventEmitter {
       players: Array.from(this.players.values()),
       bullets: Array.from(this.bullets.values()),
     };
+  }
+
+  /**
+   * Get game state update with command confirmation for a specific player
+   * @param playerId The player ID to get confirmation for
+   * @param includeAuthoritativeState Whether to include full position (for collisions/events)
+   */
+  getStateUpdate(playerId: string, includeAuthoritativeState: boolean = false) {
+    const latestConfirmedCommandId = this.playerCommandIds.get(playerId) || 0;
+    const player = this.players.get(playerId);
+    
+    const state: any = {
+      players: Array.from(this.players.values()),
+      bullets: Array.from(this.bullets.values()),
+      latestConfirmedCommandId,
+    };
+
+    // Include authoritative state if requested (collisions, events, etc.)
+    if (includeAuthoritativeState && player) {
+      state.authoritativeState = {
+        x: player.x,
+        y: player.y,
+        rotation: player.rotation,
+      };
+    }
+
+    return state;
+  }
+
+  /**
+   * Get latest confirmed command ID for a player
+   */
+  getLatestConfirmedCommandId(playerId: string): number {
+    return this.playerCommandIds.get(playerId) || 0;
   }
 
   private update() {

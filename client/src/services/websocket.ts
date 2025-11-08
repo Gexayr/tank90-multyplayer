@@ -38,10 +38,10 @@ class WebSocketService {
     }
   }
 
-  // Player movement
-  sendPlayerMove(x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
+  // Player movement - now sends only input data and command ID
+  sendPlayerMove(commandId: number, rotation: number, direction?: 'forward' | 'backward') {
     if (this.socket) {
-      this.socket.emit('player-move', { x, y, rotation, direction });
+      this.socket.emit('player-move', { commandId, rotation, direction });
     }
   }
 
@@ -101,6 +101,18 @@ class WebSocketService {
   onGameStateUpdate(callback: (state: any) => void) {
     if (this.socket) {
       this.socket.on('game-state', callback);
+    }
+  }
+
+  // State update with command confirmation
+  onStateUpdate(callback: (data: { 
+    players: any[]; 
+    bullets: any[]; 
+    latestConfirmedCommandId?: number;
+    authoritativeState?: { x: number; y: number; rotation: number };
+  }) => void) {
+    if (this.socket) {
+      this.socket.on('state-update', callback);
     }
   }
 

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import WebSocketService from '../services/websocket';
+import { CommandBuffer } from '../game/CommandBuffer';
+import { GameSimulation, TankState } from '../game/GameSimulation';
+import { Camera } from '../game/Camera';
 
 interface Bullet {
   sprite: PIXI.Graphics;
@@ -52,6 +55,15 @@ const GameCanvas: React.FC = () => {
   };
   const wsService = WebSocketService.getInstance();
   const [localScore, setLocalScore] = useState(0);
+  
+  // Client-side prediction
+  const commandBufferRef = useRef<CommandBuffer>(new CommandBuffer());
+  const gameSimulationRef = useRef<GameSimulation>(new GameSimulation());
+  const localTankStateRef = useRef<TankState | null>(null); // Predicted state for local player
+  
+  // Camera system
+  const cameraRef = useRef<Camera | null>(null);
+  
   // Minimap configuration
   const MINIMAP_WIDTH = 160; // fixed minimap size
   const MINIMAP_HEIGHT = 120;
@@ -59,6 +71,11 @@ const GameCanvas: React.FC = () => {
   const WORLD_HEIGHT = 4000;
   const MINIMAP_SCALE_X = MINIMAP_WIDTH / WORLD_WIDTH;
   const MINIMAP_SCALE_Y = MINIMAP_HEIGHT / WORLD_HEIGHT;
+
+  // Viewport/Camera configuration
+  // Fixed viewport size - adjust based on your needs (1280x720 is a common game resolution)
+  const VIEWPORT_WIDTH = 1280;
+  const VIEWPORT_HEIGHT = 720;
 
   // Create health bar for tank
   const createHealthBar = (tank: Tank) => {
@@ -91,12 +108,21 @@ const GameCanvas: React.FC = () => {
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    // Create PIXI Application
+    // Initialize camera system
+    cameraRef.current = new Camera({
+      viewportWidth: VIEWPORT_WIDTH,
+      viewportHeight: VIEWPORT_HEIGHT,
+      worldWidth: WORLD_WIDTH,
+      worldHeight: WORLD_HEIGHT,
+    });
+
+    // Create PIXI Application with fixed viewport size
     const app = new PIXI.Application({
-      width: window.innerWidth,
-      height: window.innerHeight,
+      width: VIEWPORT_WIDTH,
+      height: VIEWPORT_HEIGHT,
       backgroundColor: 0x000000,
       resolution: window.devicePixelRatio || 1,
+      autoDensity: true, // Handle high DPI displays
     });
 
     // Ensure we can control draw order via zIndex
@@ -295,6 +321,19 @@ const GameCanvas: React.FC = () => {
     // WebSocket event handlers
     wsService.onPlayerJoin((player) => {
       createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+      
+      // Initialize local state if this is the local player
+      const localId = wsService.getSocketId();
+      if (localId && player.id === localId) {
+        const localTank = tanksRef.current.get(localId);
+        if (localTank) {
+          localTankStateRef.current = {
+            x: localTank.sprite.x,
+            y: localTank.sprite.y,
+            rotation: localTank.rotation,
+          };
+        }
+      }
     });
 
     wsService.onPlayerLeave((playerId) => {
@@ -312,7 +351,14 @@ const GameCanvas: React.FC = () => {
       }
     });
 
+    // Handle player move for remote players only (local player uses prediction)
     wsService.onPlayerMove((data) => {
+      const localId = wsService.getSocketId();
+      // Skip if this is the local player - we use prediction instead
+      if (data.id === localId) {
+        return;
+      }
+      
       const tank = tanksRef.current.get(data.id);
       if (tank) {
         tank.sprite.x = data.x;
@@ -337,6 +383,81 @@ const GameCanvas: React.FC = () => {
 
       // Create bullets
       state.bullets.forEach((bullet: any) => {
+        if (!bulletsRef.current.has(bullet.id)) {
+          const tank = tanksRef.current.get(bullet.playerId);
+          if (tank) {
+            const color = 0xFFFFFF;
+            createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
+          }
+        }
+      });
+    });
+
+    // Handle state updates with command confirmation (reconciliation)
+    wsService.onStateUpdate((data) => {
+      const localId = wsService.getSocketId();
+      if (!localId) return;
+
+      // Update remote players
+      data.players.forEach((player: any) => {
+        if (player.id !== localId) {
+          const tank = tanksRef.current.get(player.id);
+          if (tank) {
+            tank.sprite.x = player.x;
+            tank.sprite.y = player.y;
+            tank.rotation = player.rotation;
+            tank.sprite.rotation = player.rotation;
+            updateHealthBar(tank);
+            ensureHighlightState(tank);
+          }
+        }
+      });
+
+      // Reconciliation for local player
+      const localTank = tanksRef.current.get(localId);
+      if (localTank && data.latestConfirmedCommandId !== undefined) {
+        // If server sent authoritative state (collision or event), use it
+        if (data.authoritativeState) {
+          localTankStateRef.current = {
+            x: data.authoritativeState.x,
+            y: data.authoritativeState.y,
+            rotation: data.authoritativeState.rotation,
+          };
+        } else {
+          // Find the server's state for local player
+          const serverPlayer = data.players.find((p: any) => p.id === localId);
+          if (serverPlayer) {
+            localTankStateRef.current = {
+              x: serverPlayer.x,
+              y: serverPlayer.y,
+              rotation: serverPlayer.rotation,
+            };
+          }
+        }
+
+        // Re-simulate unconfirmed commands
+        if (localTankStateRef.current) {
+          const unconfirmedCommands = commandBufferRef.current.getUnconfirmedCommands(data.latestConfirmedCommandId);
+          const reconciledState = gameSimulationRef.current.reSimulateCommands(
+            localTankStateRef.current,
+            unconfirmedCommands
+          );
+
+          // Update local tank with reconciled state
+          localTank.sprite.x = reconciledState.x;
+          localTank.sprite.y = reconciledState.y;
+          localTank.rotation = reconciledState.rotation;
+          localTank.sprite.rotation = reconciledState.rotation;
+          updateHealthBar(localTank);
+          ensureHighlightState(localTank);
+        }
+
+        // Remove confirmed commands from buffer
+        commandBufferRef.current.removeConfirmedCommands(data.latestConfirmedCommandId);
+      }
+
+      // Update bullets
+      data.bullets.forEach((bullet: any) => {
         if (!bulletsRef.current.has(bullet.id)) {
           const tank = tanksRef.current.get(bullet.playerId);
           if (tank) {
@@ -389,12 +510,13 @@ const GameCanvas: React.FC = () => {
 
       // Handle shooting
       if (e.key === ' ' && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
-        const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-        if (localTank) {
-          const direction = getDirectionFromRotation(localTank.rotation);
+        const localId = wsService.getSocketId();
+        const localTank = localId ? tanksRef.current.get(localId) : null;
+        if (localTank && localTankStateRef.current) {
+          const direction = getDirectionFromRotation(localTankStateRef.current.rotation);
           wsService.sendPlayerShoot(
-            localTank.sprite.x + direction.x * 25,
-            localTank.sprite.y + direction.y * 25,
+            localTankStateRef.current.x + direction.x * 25,
+            localTankStateRef.current.y + direction.y * 25,
             direction
           );
           lastShotTimeRef.current = Date.now();
@@ -409,38 +531,43 @@ const GameCanvas: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // Game loop
+    // Game loop with client-side prediction
     const gameLoop = () => {
-      const rotationSpeed = 0.1;
-
-      // Update local player
+      // Update local player with immediate prediction
       const localTank = tanksRef.current.get(wsService.getSocketId() || '');
       if (localTank) {
-        let moved = false;
-        let newRotation = localTank.rotation;
+        // Initialize local state if not set
+        if (!localTankStateRef.current) {
+          localTankStateRef.current = {
+            x: localTank.sprite.x,
+            y: localTank.sprite.y,
+            rotation: localTank.rotation,
+          };
+        }
+
+        let inputChanged = false;
+        let newRotation = localTankStateRef.current.rotation;
+        let direction: 'forward' | 'backward' | undefined = undefined;
 
         // Keyboard controls (desktop)
         if (!isTouchDevice) {
-          if (keysRef.current['ArrowLeft']) {
-            newRotation -= rotationSpeed;
-            moved = true;
-          }
-          if (keysRef.current['ArrowRight']) {
-            newRotation += rotationSpeed;
-            moved = true;
-          }
-
-          if (moved) {
-            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, newRotation);
-          }
-
-          if (keysRef.current['ArrowUp'] || keysRef.current['ArrowDown']) {
-            wsService.sendPlayerMove(
-              localTank.sprite.x,
-              localTank.sprite.y,
-              localTank.rotation,
-              keysRef.current['ArrowUp'] ? 'forward' : 'backward'
+          // Rotation input
+          if (keysRef.current['ArrowLeft'] || keysRef.current['ArrowRight']) {
+            newRotation = gameSimulationRef.current.calculateRotation(
+              localTankStateRef.current.rotation,
+              keysRef.current['ArrowLeft'],
+              keysRef.current['ArrowRight']
             );
+            inputChanged = true;
+          }
+
+          // Movement input
+          if (keysRef.current['ArrowUp']) {
+            direction = 'forward';
+            inputChanged = true;
+          } else if (keysRef.current['ArrowDown']) {
+            direction = 'backward';
+            inputChanged = true;
           }
         } else {
           // Touch joystick controls (mobile)
@@ -448,8 +575,42 @@ const GameCanvas: React.FC = () => {
           const vec = joystickVecRef.current;
           if (mag > 0.05) {
             const targetRot = Math.atan2(vec.x, -vec.y);
-            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, targetRot, mag > 0.2 ? 'forward' : undefined);
+            newRotation = targetRot;
+            direction = mag > 0.2 ? 'forward' : undefined;
+            inputChanged = true;
           }
+        }
+
+        // If input changed, immediately predict and send command
+        if (inputChanged) {
+          // Create command and add to buffer
+          const commandId = commandBufferRef.current.addCommand(newRotation, direction);
+
+          // Immediately apply prediction locally
+          const command = commandBufferRef.current.getAllCommands().find(c => c.commandId === commandId);
+          if (command && localTankStateRef.current) {
+            localTankStateRef.current = gameSimulationRef.current.applyCommand(
+              localTankStateRef.current,
+              command
+            );
+
+            // Update visual representation immediately
+            localTank.sprite.x = localTankStateRef.current.x;
+            localTank.sprite.y = localTankStateRef.current.y;
+            localTank.rotation = localTankStateRef.current.rotation;
+            localTank.sprite.rotation = localTankStateRef.current.rotation;
+            updateHealthBar(localTank);
+            ensureHighlightState(localTank);
+          }
+
+          // Send command to server (only input data + command ID)
+          wsService.sendPlayerMove(commandId, newRotation, direction);
+        } else if (localTankStateRef.current) {
+          // Keep visual in sync with predicted state even when no new input
+          localTank.sprite.x = localTankStateRef.current.x;
+          localTank.sprite.y = localTankStateRef.current.y;
+          localTank.rotation = localTankStateRef.current.rotation;
+          localTank.sprite.rotation = localTankStateRef.current.rotation;
         }
       }
 
@@ -462,35 +623,47 @@ const GameCanvas: React.FC = () => {
         b.sprite.y += b.direction.y * b.speed;
       });
 
-      // Camera follow: center local tank, clamp to world bounds
-      if (appRef.current && worldRef.current) {
-        const app = appRef.current;
+      // Camera follow: center on local tank with boundary clamping
+      if (appRef.current && worldRef.current && cameraRef.current) {
         const world = worldRef.current;
-        const viewW = app.view.width;
-        const viewH = app.view.height;
-        let targetX = 0;
-        let targetY = 0;
-        const lt = tanksRef.current.get(wsService.getSocketId() || '');
-        if (lt) {
-          targetX = viewW / 2 - lt.sprite.x;
-          targetY = viewH / 2 - lt.sprite.y;
+        const camera = cameraRef.current;
+        const localId = wsService.getSocketId();
+        
+        // Use predicted state for camera tracking (most accurate)
+        if (localId && localTankStateRef.current) {
+          const cameraOffset = camera.follow(
+            localTankStateRef.current.x,
+            localTankStateRef.current.y
+          );
+          
+          // Apply camera offset to world container
+          // Negative because we move the world opposite to the camera movement
+          world.x = cameraOffset.x;
+          world.y = cameraOffset.y;
+        } else {
+          // Fallback to sprite position if predicted state not available
+          const localTank = localId ? tanksRef.current.get(localId) : null;
+          if (localTank) {
+            const cameraOffset = camera.follow(
+              localTank.sprite.x,
+              localTank.sprite.y
+            );
+            world.x = cameraOffset.x;
+            world.y = cameraOffset.y;
+          }
         }
-        // Clamp so world does not reveal outside edges
-        const minX = Math.min(0, viewW - WORLD_WIDTH);
-        const maxX = 0;
-        const minY = Math.min(0, viewH - WORLD_HEIGHT);
-        const maxY = 0;
-        world.x = Math.max(minX, Math.min(targetX, maxX));
-        world.y = Math.max(minY, Math.min(targetY, maxY));
       }
 
       // Draw minimap overlay
       drawMinimap();
     };
 
-    // Resize handler to keep full-screen canvas
+    // Resize handler - maintain fixed viewport but scale canvas if needed
+    // Note: We keep fixed viewport size, but can scale the canvas element via CSS
     const handleResize = () => {
-      app.renderer.resize(window.innerWidth, window.innerHeight);
+      // Optionally: Update camera viewport if you want it to scale
+      // For now, we keep fixed viewport size
+      // app.renderer.resize(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     };
     window.addEventListener('resize', handleResize);
 
@@ -517,14 +690,25 @@ const GameCanvas: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ 
+      position: 'relative',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: '100vw',
+      height: '100vh',
+      overflow: 'hidden',
+      backgroundColor: '#000'
+    }}>
       <div
         ref={canvasRef}
         style={{
-          width: '100vw',
-          height: '100vh',
-          margin: 0,
-          border: '2px solid #333'
+          width: `${VIEWPORT_WIDTH}px`,
+          height: `${VIEWPORT_HEIGHT}px`,
+          margin: '0 auto',
+          border: '2px solid #333',
+          // Prevent scrollbars by ensuring canvas doesn't exceed viewport
+          boxSizing: 'border-box'
         }}
       />
       <div
@@ -591,10 +775,7 @@ const GameCanvas: React.FC = () => {
               joystickAngleRef.current = null;
               joystickMagnitudeRef.current = 0;
               joystickVecRef.current = { x: 0, y: 0 };
-              const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-              if (localTank) {
-                wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation);
-              }
+              // Movement will be handled in game loop, no need to send here
             }}
             style={{
               position: 'fixed',
@@ -627,13 +808,14 @@ const GameCanvas: React.FC = () => {
 
           <div
             onTouchStart={() => {
-              const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-              if (!localTank) return;
+              const localId = wsService.getSocketId();
+              const localTank = localId ? tanksRef.current.get(localId) : null;
+              if (!localTank || !localTankStateRef.current) return;
               if (Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
-                const dir = getDirectionFromRotation(localTank.rotation);
+                const dir = getDirectionFromRotation(localTankStateRef.current.rotation);
                 wsService.sendPlayerShoot(
-                  localTank.sprite.x + dir.x * 25,
-                  localTank.sprite.y + dir.y * 25,
+                  localTankStateRef.current.x + dir.x * 25,
+                  localTankStateRef.current.y + dir.y * 25,
                   dir
                 );
                 lastShotTimeRef.current = Date.now();
