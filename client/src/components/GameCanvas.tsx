@@ -491,16 +491,16 @@ const GameCanvas: React.FC = () => {
     });
 
     // Map objects handler
-    // wsService.onMapObjects((objects) => {
-    //   objects.forEach((obj: any) => {
-    //     createMapObject(obj);
-    //   });
-    // });
+    wsService.onMapObjects((objects) => {
+      objects.forEach((obj: any) => {
+        createMapObject(obj);
+      });
+    });
 
     // Map update handler (for destroyed walls)
-    // wsService.onMapUpdate((data) => {
-    //   updateMapObject(data.objectId, data.destroyed);
-    // });
+    wsService.onMapUpdate((data) => {
+      updateMapObject(data.objectId, data.destroyed);
+    });
 
     // Also handle map objects from game state
     wsService.onGameStateUpdate((state) => {

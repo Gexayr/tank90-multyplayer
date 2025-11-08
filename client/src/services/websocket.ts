@@ -117,7 +117,7 @@ class WebSocketService {
   }
 
   // Map objects and updates
-/*  onMapObjects(callback: (objects: any[]) => void) {
+  onMapObjects(callback: (objects: any[]) => void) {
     if (this.socket) {
       this.socket.on('map-objects', callback);
     }
@@ -127,7 +127,7 @@ class WebSocketService {
     if (this.socket) {
       this.socket.on('map-update', callback);
     }
-  }*/
+  }
 
   onBulletCreate(callback: (bullet: any) => void) {
     if (this.socket) {
