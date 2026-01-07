@@ -1,0 +1,19 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <!-- Tracks -->
+    <rect x="6" y="10" width="10" height="44" rx="3" fill="#1a1a1a"/>
+    <rect x="48" y="10" width="10" height="44" rx="3" fill="#1a1a1a"/>
+
+    <!-- Hull -->
+    <rect x="16" y="12" width="32" height="40" rx="4" fill="#3f6b3f"/>
+    <rect x="18" y="16" width="28" height="32" rx="3" fill="#4f7f4f"/>
+
+    <!-- Turret base -->
+    <circle cx="32" cy="32" r="10" fill="#3a5f3a"/>
+    <circle cx="32" cy="32" r="7" fill="#4f7f4f"/>
+
+    <!-- Cannon -->
+    <rect x="30" y="4" width="4" height="18" rx="2" fill="#1a1a1a"/>
+
+    <!-- Hatch detail -->
+    <rect x="29" y="30" width="6" height="6" rx="1" fill="#2f4f2f"/>
+</svg>

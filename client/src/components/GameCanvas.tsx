@@ -16,7 +16,7 @@ interface Bullet {
 }
 
 interface Tank {
-  sprite: PIXI.Graphics;
+  sprite: PIXI.Sprite;
   rotation: number;
   id: string;
   health: number;
@@ -100,7 +100,7 @@ const GameCanvas: React.FC = () => {
   const updateHealthBar = (tank: Tank) => {
     const healthPercentage = tank.health / tank.maxHealth;
     tank.healthBar.clear();
-    tank.healthBar.beginFill(0x00ff00);
+    tank.healthBar.beginFill(0x006600);
     tank.healthBar.drawRect(-20, 30, 40 * healthPercentage, 5);
     tank.healthBar.endFill();
 
@@ -149,7 +149,7 @@ const GameCanvas: React.FC = () => {
     const app = new PIXI.Application({
       width: viewportWidth,
       height: viewportHeight,
-      backgroundColor: 0x000000,
+      backgroundColor: 0x2a2a2a,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true, // Handle high DPI displays
     });
@@ -169,7 +169,7 @@ const GameCanvas: React.FC = () => {
 
     const grid = new PIXI.Graphics();
     const gridSize = 40; // size of each cell
-    grid.lineStyle(1, 0x444444, 0.4);
+    grid.lineStyle(1, 0x555555, 0.4);
     for (let x = 0; x <= WORLD_WIDTH; x += gridSize) {
       grid.moveTo(x + 0.5, 0);
       grid.lineTo(x + 0.5, WORLD_HEIGHT);
@@ -324,7 +324,7 @@ const GameCanvas: React.FC = () => {
         ctx.translate(x, y);
         ctx.rotate(t.rotation);
         // body
-        ctx.fillStyle = `#${t.color.toString(16).padStart(6,'0')}`;
+        ctx.fillStyle = '#4f7f4f';
         ctx.fillRect(-3, -3, 6, 6);
         // direction tip
         ctx.fillStyle = isLocal ? 'rgba(255,255,0,0.9)' : 'rgba(255,0,0,0.9)';
@@ -409,19 +409,15 @@ const GameCanvas: React.FC = () => {
       }
     };
 
+    // Load tank texture
+    const tankTexture = PIXI.Texture.from('/tank.svg');
+
     // Create tank function
     const createTank = (id: string, x: number, y: number, color: number, health: number, score: number) => {
-      const tank = new PIXI.Graphics();
-      tank.beginFill(color);
-      tank.drawRect(-20, -20, 40, 40); // Center the tank
-      tank.endFill();
-      
-      // Add direction indicator (triangle)
-      tank.beginFill(0xff0000);
-      tank.moveTo(0, -25);
-      tank.lineTo(-5, -15);
-      tank.lineTo(5, -15);
-      tank.endFill();
+      const tank = new PIXI.Sprite(tankTexture);
+      tank.anchor.set(0.5);
+      tank.width = 40;
+      tank.height = 40;
       
       tank.x = x;
       tank.y = y;
