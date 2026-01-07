@@ -17,7 +17,7 @@ const ASPECT_RATIO = VIEWPORT_WIDTH / VIEWPORT_HEIGHT;
 const WORLD_WIDTH = 4000;
 const WORLD_HEIGHT = 4000;
 const MINIMAP_WIDTH = 160;
-const MINIMAP_HEIGHT = 120;
+const MINIMAP_HEIGHT = 160;
 const SHOOT_BTN_SIZE = 80;
 
 const GameCanvas: React.FC = () => {
@@ -94,12 +94,11 @@ const GameCanvas: React.FC = () => {
     // Draw map objects
     mapManager.getMapObjects().forEach((sprite, objId) => {
       if (!sprite.visible) return;
-      const bounds = sprite.getBounds();
       ctx.fillStyle = objId.startsWith('brick') ? 'rgba(139, 69, 19, 0.6)' :
                       objId.startsWith('concrete') ? 'rgba(128, 128, 128, 0.6)' :
                       objId.startsWith('water') ? 'rgba(65, 105, 225, 0.5)' :
                       objId.startsWith('tree') ? 'rgba(34, 139, 34, 0.5)' : 'rgba(255, 255, 255, 0.3)';
-      ctx.fillRect(bounds.x * MINIMAP_SCALE_X, bounds.y * MINIMAP_SCALE_Y, bounds.width * MINIMAP_SCALE_X, bounds.height * MINIMAP_SCALE_Y);
+      ctx.fillRect(sprite.x * MINIMAP_SCALE_X, sprite.y * MINIMAP_SCALE_Y, sprite.width * MINIMAP_SCALE_X, sprite.height * MINIMAP_SCALE_Y);
     });
 
     // Draw bullets

@@ -10,6 +10,8 @@ const Minimap: React.FC<MinimapProps> = ({ canvasRef, width, height }) => {
   return (
     <canvas
       ref={canvasRef}
+      width={width}
+      height={height}
       style={{
         position: 'fixed',
         right: '10px',
