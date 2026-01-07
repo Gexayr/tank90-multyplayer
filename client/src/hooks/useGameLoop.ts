@@ -58,6 +58,8 @@ export const useGameLoop = ({
     if (!app || !world || !tankManager || !bulletManager || !mapManager) return;
 
     const gameLoop = () => {
+      const deltaMS = app.ticker.deltaMS;
+      const dt = deltaMS / 1000;
       const localId = wsService.getSocketId();
       tankManager.setSocketId(localId);
       const tanks = tankManager.getTanks();
@@ -93,43 +95,24 @@ export const useGameLoop = ({
           const mag = joystickMagnitudeRef.current;
           const vec = joystickVecRef.current;
           if (mag > 0.05) {
-            const angle = Math.atan2(vec.x, -vec.y);
-            // In a real authoritative model, we'd send the angle or discrete left/right
-            // For now let's convert angle to left/right for simplicity if needed,
-            // but the server should probably handle rotation better.
-            // Let's stick to the required input format.
-            // Since the tank 90 style often has fixed directions, 
-            // but the current code uses arbitrary rotation.
-            
-            // To match the required input, we'll map joystick to up/down/left/right
-            if (vec.x < -0.5) input.left = true;
-            if (vec.x > 0.5) input.right = true;
-            if (vec.y < -0.5) input.up = true;
-            if (vec.y > 0.5) input.down = true;
+            // Map joystick to up/down/left/right to match server expectation
+            if (vec.x < -0.4) input.left = true;
+            if (vec.x > 0.4) input.right = true;
+            if (vec.y < -0.4) input.up = true;
+            if (vec.y > 0.4) input.down = true;
           }
         }
 
         // Client-side prediction
-        // Map input to the old command format for the simulation
-        const rotation = gameSimulationRef.current.calculateRotation(
-          localTankStateRef.current.rotation,
-          input.left,
-          input.right
-        );
         let direction: 'forward' | 'backward' | undefined = undefined;
         if (input.up) direction = 'forward';
         else if (input.down) direction = 'backward';
 
-        sequenceIdRef.current++;
-        input.sequenceId = sequenceIdRef.current;
-
-        const commandId = commandBufferRef.current.addCommand(rotation, direction);
-        // Note: we use sequenceId from input for reconciliation now, but CommandBuffer uses commandId.
-        // Let's make them consistent or use sequenceId as commandId.
-        
+        // Update local state with prediction using current deltaTime
         localTankStateRef.current = gameSimulationRef.current.applyCommand(
           localTankStateRef.current,
-          { commandId: input.sequenceId, rotation, direction, timestamp: Date.now() }
+          { commandId: 0, rotation: 0, direction, left: input.left, right: input.right, timestamp: Date.now() },
+          dt
         );
 
         localTankLoop.sprite.x = localTankStateRef.current.x;
@@ -140,11 +123,20 @@ export const useGameLoop = ({
 
         // Throttle input sending
         if (Date.now() - lastInputSentTimeRef.current >= INPUT_INTERVAL) {
+          sequenceIdRef.current++;
+          input.sequenceId = sequenceIdRef.current;
+          
           if (pendingShootRef.current && Date.now() - lastShotTimeRef.current >= SHOT_COOLDOWN) {
             input.shoot = true;
             lastShotTimeRef.current = Date.now();
             pendingShootRef.current = false;
           }
+          
+          // Store command for reconciliation
+          // Note: we use server-tick-equivalent rotation/direction for the command buffer
+          // to match server's movement logic during re-simulation.
+          commandBufferRef.current.addCommand(0, direction, input.left, input.right);
+          
           wsService.sendPlayerInput(input);
           lastInputSentTimeRef.current = Date.now();
         }
@@ -239,7 +231,6 @@ export const useGameLoop = ({
       wsService.onSnapshot((snapshot) => {
         const localId = wsService.getSocketId();
         if (localId) tankManager.setSocketId(localId);
-        const updateTimestamp = performance.now();
         
         snapshot.p.forEach((player: any) => {
           let tank = tankManager.getTanks().get(player.id);
@@ -252,7 +243,8 @@ export const useGameLoop = ({
           if (player.id !== localId) {
             if (tank) {
               if (!tank.interpolation) tank.interpolation = new NetworkInterpolation(100);
-              tank.interpolation.addState({ x: player.x, y: player.y, rotation: player.r / 100, timestamp: updateTimestamp });
+              // Use performance.now() for consistency with getInterpolatedState
+              tank.interpolation.addState({ x: player.x, y: player.y, rotation: player.r / 100, timestamp: performance.now() });
               tank.health = player.h;
               tank.score = player.s;
               tankManager.updateHealthBar(tank);
@@ -261,13 +253,18 @@ export const useGameLoop = ({
             // Reconciliation for local player
             if (tank && localTankStateRef.current) {
               // Server state for local player
-              localTankStateRef.current = { x: player.x, y: player.y, rotation: player.r / 100 };
+              const serverState = { x: player.x, y: player.y, rotation: player.r / 100 };
               
               // Re-simulate commands that haven't been confirmed yet
               const unconfirmedCommands = commandBufferRef.current.getUnconfirmedCommands(player.sid);
-              const reconciledState = gameSimulationRef.current.reSimulateCommands(localTankStateRef.current, unconfirmedCommands);
+              const reconciledState = gameSimulationRef.current.reSimulateCommands(serverState, unconfirmedCommands);
               
+              // Update local predicted state with reconciled state
               localTankStateRef.current = reconciledState;
+              
+              // Smoothly transition local tank towards reconciled position to avoid snapping
+              // If the difference is small, we can just snap. If large, we should probably snap anyway
+              // but here we follow the instruction to reconcile.
               tank.sprite.x = reconciledState.x;
               tank.sprite.y = reconciledState.y;
               tank.rotation = reconciledState.rotation;

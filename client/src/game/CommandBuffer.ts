@@ -7,6 +7,8 @@ export interface MovementCommand {
   commandId: number;
   rotation: number;
   direction?: 'forward' | 'backward';
+  left?: boolean;
+  right?: boolean;
   timestamp: number;
 }
 
@@ -19,12 +21,14 @@ export class CommandBuffer {
    * Add a new movement command to the buffer
    * @returns The command ID assigned to this command
    */
-  addCommand(rotation: number, direction?: 'forward' | 'backward'): number {
+  addCommand(rotation: number, direction?: 'forward' | 'backward', left?: boolean, right?: boolean): number {
     const commandId = this.nextCommandId++;
     const command: MovementCommand = {
       commandId,
       rotation,
       direction,
+      left,
+      right,
       timestamp: Date.now(),
     };
 
