@@ -16,7 +16,9 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
-    this.socket = io(this.SERVER_URL);
+    this.socket = io(this.SERVER_URL, {
+      transports: ['websocket']
+    });
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
@@ -35,6 +37,20 @@ class WebSocketService {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
+    }
+  }
+
+  // Player input
+  sendPlayerInput(input: {
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    shoot: boolean;
+    sequenceId: number;
+  }) {
+    if (this.socket) {
+      this.socket.emit('player-input', input);
     }
   }
 
@@ -101,6 +117,17 @@ class WebSocketService {
   onGameStateUpdate(callback: (state: any) => void) {
     if (this.socket) {
       this.socket.on('game-state', callback);
+    }
+  }
+
+  // Snapshot update
+  onSnapshot(callback: (snapshot: {
+    t: number;
+    p: any[];
+    b: any[];
+  }) => void) {
+    if (this.socket) {
+      this.socket.on('s', callback);
     }
   }
 

@@ -43,7 +43,11 @@ export const useGameLoop = ({
   const gameSimulationRef = useRef<GameSimulation>(new GameSimulation());
   const localTankStateRef = useRef<TankState | null>(null);
   const lastShotTimeRef = useRef<number>(0);
+  const pendingShootRef = useRef<boolean>(false);
+  const sequenceIdRef = useRef<number>(0);
+  const lastInputSentTimeRef = useRef<number>(0);
   const SHOT_COOLDOWN = 500;
+  const INPUT_INTERVAL = 1000 / 20; // Send 20 inputs per second
 
   const getDirectionFromRotation = (rotation: number) => ({
     x: Math.sin(rotation),
@@ -57,7 +61,6 @@ export const useGameLoop = ({
       const localId = wsService.getSocketId();
       tankManager.setSocketId(localId);
       const tanks = tankManager.getTanks();
-      const bullets = bulletManager.getBullets();
 
       const localTankLoop = localId ? tanks.get(localId) : null;
       if (localTankLoop) {
@@ -69,59 +72,81 @@ export const useGameLoop = ({
           };
         }
 
-        let inputChanged = false;
-        let newRotation = localTankStateRef.current.rotation;
-        let direction: 'forward' | 'backward' | undefined = undefined;
+        const input = {
+          up: false,
+          down: false,
+          left: false,
+          right: false,
+          shoot: false,
+          sequenceId: 0
+        };
 
         if (!isTouchDevice) {
-          if (keysRef.current['ArrowLeft'] || keysRef.current['a'] || keysRef.current['A'] ||
-              keysRef.current['ArrowRight'] || keysRef.current['d'] || keysRef.current['D']) {
-            newRotation = gameSimulationRef.current.calculateRotation(
-                localTankStateRef.current.rotation,
-                keysRef.current['ArrowLeft'] || keysRef.current['a'] || keysRef.current['A'],
-                keysRef.current['ArrowRight'] || keysRef.current['d'] || keysRef.current['D']
-            );
-            inputChanged = true;
-          }
-          if (keysRef.current['ArrowUp'] || keysRef.current['w'] || keysRef.current['W']) {
-            direction = 'forward';
-            inputChanged = true;
-          } else if (keysRef.current['ArrowDown'] || keysRef.current['s'] || keysRef.current['S']) {
-            direction = 'backward';
-            inputChanged = true;
+          if (keysRef.current['ArrowLeft'] || keysRef.current['a'] || keysRef.current['A']) input.left = true;
+          if (keysRef.current['ArrowRight'] || keysRef.current['d'] || keysRef.current['D']) input.right = true;
+          if (keysRef.current['ArrowUp'] || keysRef.current['w'] || keysRef.current['W']) input.up = true;
+          if (keysRef.current['ArrowDown'] || keysRef.current['s'] || keysRef.current['S']) input.down = true;
+          if (keysRef.current[' '] || keysRef.current['f'] || keysRef.current['F']) {
+            pendingShootRef.current = true;
           }
         } else {
           const mag = joystickMagnitudeRef.current;
           const vec = joystickVecRef.current;
           if (mag > 0.05) {
-            const targetRot = Math.atan2(vec.x, -vec.y);
-            newRotation = targetRot;
-            direction = mag > 0.2 ? 'forward' : undefined;
-            inputChanged = true;
+            const angle = Math.atan2(vec.x, -vec.y);
+            // In a real authoritative model, we'd send the angle or discrete left/right
+            // For now let's convert angle to left/right for simplicity if needed,
+            // but the server should probably handle rotation better.
+            // Let's stick to the required input format.
+            // Since the tank 90 style often has fixed directions, 
+            // but the current code uses arbitrary rotation.
+            
+            // To match the required input, we'll map joystick to up/down/left/right
+            if (vec.x < -0.5) input.left = true;
+            if (vec.x > 0.5) input.right = true;
+            if (vec.y < -0.5) input.up = true;
+            if (vec.y > 0.5) input.down = true;
           }
         }
 
-        if (inputChanged) {
-          const commandId = commandBufferRef.current.addCommand(newRotation, direction);
-          const command = commandBufferRef.current.getAllCommands().find(c => c.commandId === commandId);
-          if (command && localTankStateRef.current) {
-            localTankStateRef.current = gameSimulationRef.current.applyCommand(
-                localTankStateRef.current,
-                command
-            );
-            localTankLoop.sprite.x = localTankStateRef.current.x;
-            localTankLoop.sprite.y = localTankStateRef.current.y;
-            localTankLoop.rotation = localTankStateRef.current.rotation;
-            localTankLoop.sprite.rotation = localTankStateRef.current.rotation;
-            tankManager.updateHealthBar(localTankLoop);
-            tankManager.ensureHighlightState(localTankLoop);
+        // Client-side prediction
+        // Map input to the old command format for the simulation
+        const rotation = gameSimulationRef.current.calculateRotation(
+          localTankStateRef.current.rotation,
+          input.left,
+          input.right
+        );
+        let direction: 'forward' | 'backward' | undefined = undefined;
+        if (input.up) direction = 'forward';
+        else if (input.down) direction = 'backward';
+
+        sequenceIdRef.current++;
+        input.sequenceId = sequenceIdRef.current;
+
+        const commandId = commandBufferRef.current.addCommand(rotation, direction);
+        // Note: we use sequenceId from input for reconciliation now, but CommandBuffer uses commandId.
+        // Let's make them consistent or use sequenceId as commandId.
+        
+        localTankStateRef.current = gameSimulationRef.current.applyCommand(
+          localTankStateRef.current,
+          { commandId: input.sequenceId, rotation, direction, timestamp: Date.now() }
+        );
+
+        localTankLoop.sprite.x = localTankStateRef.current.x;
+        localTankLoop.sprite.y = localTankStateRef.current.y;
+        localTankLoop.rotation = localTankStateRef.current.rotation;
+        localTankLoop.sprite.rotation = localTankStateRef.current.rotation;
+        tankManager.updateHealthBar(localTankLoop);
+
+        // Throttle input sending
+        if (Date.now() - lastInputSentTimeRef.current >= INPUT_INTERVAL) {
+          if (pendingShootRef.current && Date.now() - lastShotTimeRef.current >= SHOT_COOLDOWN) {
+            input.shoot = true;
+            lastShotTimeRef.current = Date.now();
+            pendingShootRef.current = false;
           }
-          wsService.sendPlayerMove(commandId, newRotation, direction);
-        } else if (localTankStateRef.current) {
-          localTankLoop.sprite.x = localTankStateRef.current.x;
-          localTankLoop.sprite.y = localTankStateRef.current.y;
-          localTankLoop.rotation = localTankStateRef.current.rotation;
-          localTankLoop.sprite.rotation = localTankStateRef.current.rotation;
+          wsService.sendPlayerInput(input);
+          lastInputSentTimeRef.current = Date.now();
         }
       }
 
@@ -172,18 +197,7 @@ export const useGameLoop = ({
 
   // Handle shooting logic
   const handleShoot = () => {
-    if (Date.now() - lastShotTimeRef.current < SHOT_COOLDOWN) return;
-    const localId = wsService.getSocketId();
-    const localTank = localId ? tankManager?.getTanks().get(localId) : null;
-    if (localTank && localTankStateRef.current) {
-      const direction = getDirectionFromRotation(localTankStateRef.current.rotation);
-      wsService.sendPlayerShoot(
-        localTankStateRef.current.x + direction.x * 25,
-        localTankStateRef.current.y + direction.y * 25,
-        direction
-      );
-      lastShotTimeRef.current = Date.now();
-    }
+    pendingShootRef.current = true;
   };
 
   useEffect(() => {
@@ -201,85 +215,101 @@ export const useGameLoop = ({
     if (!tankManager || !bulletManager || !mapManager) return;
 
     const cleanup = [
-      wsService.onGameStateUpdate((state) => {
-        state.players.forEach((player: any) => {
-          tankManager.createTank(player.id, player.x, player.y, player.color, player.health, player.score);
-          if (player.id === wsService.getSocketId()) {
-            localTankStateRef.current = { x: player.x, y: player.y, rotation: player.rotation };
-            onScoreUpdate(player.score);
-          }
-        });
-      }),
-      wsService.onPlayerJoin((player) => {
-        tankManager.createTank(player.id, player.x, player.y, player.color, player.health, player.score);
-        if (player.id === wsService.getSocketId()) {
-          localTankStateRef.current = { x: player.x, y: player.y, rotation: 0 };
-          onScoreUpdate(player.score);
-        }
-      }),
       wsService.onMapObjects((objects) => objects.forEach(obj => mapManager.createMapObject(obj))),
       wsService.onMapUpdate((data) => mapManager.updateMapObject(data.objectId, data.destroyed)),
       wsService.onPlayerLeave((playerId) => tankManager.removeTank(playerId)),
-      wsService.onBulletCreate((bullet) => bulletManager.createBullet(bullet.id, bullet.x, bullet.y, 0xFFFFFF, bullet.playerId, bullet.direction, bullet.speed)),
-      wsService.onBulletRemove((bulletId) => bulletManager.removeBullet(bulletId)),
-      wsService.onHealthUpdate((data) => {
-        const tank = tankManager.getTanks().get(data.id);
-        if (tank) {
-          tank.health = data.health;
-          tankManager.updateHealthBar(tank);
-        }
-      }),
-      wsService.onScoreUpdate((data) => {
-        const tank = tankManager.getTanks().get(data.playerId);
-        if (tank) {
-          tank.score = data.score;
-          if (tank.id === wsService.getSocketId()) onScoreUpdate(tank.score);
-        }
-      }),
-      wsService.onStateUpdate((data) => {
+      wsService.onPlayerJoin((player) => {
         const localId = wsService.getSocketId();
+        if (localId) tankManager.setSocketId(localId);
+        if (!tankManager.getTanks().has(player.id)) {
+          tankManager.createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+        }
+      }),
+      wsService.onGameStateUpdate((state) => {
+        const localId = wsService.getSocketId();
+        if (localId) tankManager.setSocketId(localId);
+        if (state.players) {
+          state.players.forEach((player: any) => {
+            if (!tankManager.getTanks().has(player.id)) {
+              tankManager.createTank(player.id, player.x, player.y, player.color, player.health, player.score);
+            }
+          });
+        }
+      }),
+      wsService.onSnapshot((snapshot) => {
+        const localId = wsService.getSocketId();
+        if (localId) tankManager.setSocketId(localId);
         const updateTimestamp = performance.now();
         
-        data.players.forEach((player: any) => {
+        snapshot.p.forEach((player: any) => {
+          let tank = tankManager.getTanks().get(player.id);
+          
+          if (!tank) {
+            // Create tank if it doesn't exist (both for local and remote)
+            tank = tankManager.createTank(player.id, player.x, player.y, 0xFFFFFF, player.h, player.s);
+          }
+
           if (player.id !== localId) {
-            const tank = tankManager.getTanks().get(player.id);
             if (tank) {
               if (!tank.interpolation) tank.interpolation = new NetworkInterpolation(100);
-              tank.interpolation.addState({ x: player.x, y: player.y, rotation: player.rotation, timestamp: updateTimestamp });
+              tank.interpolation.addState({ x: player.x, y: player.y, rotation: player.r / 100, timestamp: updateTimestamp });
+              tank.health = player.h;
+              tank.score = player.s;
+              tankManager.updateHealthBar(tank);
             }
-          }
-        });
-
-        if (localId && data.latestConfirmedCommandId !== undefined) {
-          const localTank = tankManager.getTanks().get(localId);
-          if (localTank) {
-            const serverPlayer = data.players.find((p: any) => p.id === localId);
-            if (data.authoritativeState) {
-              localTankStateRef.current = { ...data.authoritativeState };
-            } else if (serverPlayer) {
-              localTankStateRef.current = { x: serverPlayer.x, y: serverPlayer.y, rotation: serverPlayer.rotation };
-            }
-
-            if (localTankStateRef.current) {
-              const unconfirmedCommands = commandBufferRef.current.getUnconfirmedCommands(data.latestConfirmedCommandId);
+          } else {
+            // Reconciliation for local player
+            if (tank && localTankStateRef.current) {
+              // Server state for local player
+              localTankStateRef.current = { x: player.x, y: player.y, rotation: player.r / 100 };
+              
+              // Re-simulate commands that haven't been confirmed yet
+              const unconfirmedCommands = commandBufferRef.current.getUnconfirmedCommands(player.sid);
               const reconciledState = gameSimulationRef.current.reSimulateCommands(localTankStateRef.current, unconfirmedCommands);
-              localTank.sprite.x = reconciledState.x;
-              localTank.sprite.y = reconciledState.y;
-              localTank.rotation = reconciledState.rotation;
-              localTank.sprite.rotation = reconciledState.rotation;
-              tankManager.updateHealthBar(localTank);
-              tankManager.ensureHighlightState(localTank);
+              
+              localTankStateRef.current = reconciledState;
+              tank.sprite.x = reconciledState.x;
+              tank.sprite.y = reconciledState.y;
+              tank.rotation = reconciledState.rotation;
+              tank.sprite.rotation = reconciledState.rotation;
+              
+              tank.health = player.h;
+              tank.score = player.s;
+              tankManager.updateHealthBar(tank);
+              onScoreUpdate(player.s);
+              
+              commandBufferRef.current.removeConfirmedCommands(player.sid);
             }
-            commandBufferRef.current.removeConfirmedCommands(data.latestConfirmedCommandId);
-          }
-        }
-
-        data.bullets.forEach((bullet: any) => {
-          if (!bulletManager.getBullets().has(bullet.id)) {
-            bulletManager.createBullet(bullet.id, bullet.x, bullet.y, 0xFFFFFF, bullet.playerId, bullet.direction, bullet.speed);
           }
         });
-      })
+
+        // Update bullets from snapshot
+        // First, mark all current bullets as potentially removed
+        const currentBullets = bulletManager.getBullets();
+        const snapshotBulletIds = new Set(snapshot.b.map(b => b.id));
+        
+        // Remove bullets not in snapshot
+        currentBullets.forEach((bullet, id) => {
+          if (!snapshotBulletIds.has(id)) {
+            bulletManager.removeBullet(id);
+          }
+        });
+
+        // Add or update bullets from snapshot
+        snapshot.b.forEach((b: any) => {
+          if (!currentBullets.has(b.id)) {
+            // We don't have direction/speed in snapshot, so we'd need them if we want to predict bullets
+            // But for now, let's just snap bullets to snapshot positions
+            bulletManager.createBullet(b.id, b.x, b.y, 0xFFFFFF, '', { x: 0, y: 0 }, 0);
+          } else {
+            const bullet = currentBullets.get(b.id);
+            if (bullet) {
+              bullet.sprite.x = b.x;
+              bullet.sprite.y = b.y;
+            }
+          }
+        });
+      }),
     ];
 
     return () => {

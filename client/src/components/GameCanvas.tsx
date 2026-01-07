@@ -23,7 +23,15 @@ const SHOOT_BTN_SIZE = 80;
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
-  const [localScore, setLocalScore] = useState(0);
+  const scoreRef = useRef(0);
+  const [displayScore, setDisplayScore] = useState(0);
+
+  const onScoreUpdate = useCallback((score: number) => {
+    if (score !== scoreRef.current) {
+      scoreRef.current = score;
+      setDisplayScore(score);
+    }
+  }, []);
 
   const [pixiApp, setPixiApp] = useState<PIXI.Application | null>(null);
   const [worldContainer, setWorldContainer] = useState<PIXI.Container | null>(null);
@@ -115,7 +123,7 @@ const GameCanvas: React.FC = () => {
     isTouchDevice,
     joystickMagnitudeRef,
     joystickVecRef,
-    onScoreUpdate: setLocalScore,
+    onScoreUpdate: onScoreUpdate,
     drawMinimap,
   });
 
@@ -183,7 +191,6 @@ const GameCanvas: React.FC = () => {
   return (
     <div className="game-canvas-wrapper">
       <div ref={canvasRef} className="game-canvas-container" />
-      <div className="score-display">Score: {localScore}</div>
       <Minimap canvasRef={minimapRef} width={MINIMAP_WIDTH} height={MINIMAP_HEIGHT} />
       {isTouchDevice && (
         <>

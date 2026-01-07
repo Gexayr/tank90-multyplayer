@@ -5,6 +5,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+export interface PlayerInput {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+  shoot: boolean;
+  sequenceId: number;
+}
+
 export interface Player {
   id: string;
   x: number;
@@ -13,6 +22,7 @@ export interface Player {
   color: number;
   health: number;
   score: number;
+  lastInputSequenceId: number;
 }
 
 export interface Bullet {
@@ -33,17 +43,14 @@ export class Game extends EventEmitter {
   private readonly WORLD_HEIGHT = 4000;
   private readonly TANK_RADIUS = 20;
   
-  // Map objects
   private mapObjects = new Map<string, MapObject>();
   
-  // Command tracking for client-side prediction
-  private playerCommandIds = new Map<string, number>(); // Latest confirmed command ID per player
-  private playerPendingCommands = new Map<string, Array<{
-    commandId: number;
-    rotation: number;
-    direction?: 'forward' | 'backward';
-    timestamp: number;
-  }>>(); // Pending commands queue per player
+  // Input handling
+  private playerInputs = new Map<string, PlayerInput>();
+  private playerLastShootTime = new Map<string, number>();
+  private currentTick = 0;
+  private readonly TICK_RATE = 25; // 25 Hz
+  private readonly TICK_DURATION = 1000 / 25;
 
   constructor() {
     super();
@@ -53,19 +60,152 @@ export class Game extends EventEmitter {
       ? process.env.ADD_MAP_OBJECTS.toLowerCase() === 'true'
       : true;
 
-      console.log("process.env.ADD_MAP_OBJECTS")
-      console.log(process.env.ADD_MAP_OBJECTS)
-      console.log(addMapObjects)
-
     const mapLayout = generateMapLayout(addMapObjects);
     mapLayout.forEach(obj => {
       this.mapObjects.set(obj.id, obj);
     });
     
-    // Game loop
+    // Fixed server tick loop
     setInterval(() => {
-      this.update();
-    }, 1000 / 60); // 60 FPS
+      this.tick();
+    }, this.TICK_DURATION);
+  }
+
+  private tick() {
+    this.currentTick++;
+    this.processInputs();
+    this.update();
+    this.emit('tick', this.getSnapshot());
+  }
+
+  private processInputs() {
+    this.players.forEach((player, id) => {
+      const input = this.playerInputs.get(id);
+      if (!input) return;
+
+      // Handle rotation
+      const ROTATION_SPEED = 0.1;
+      if (input.left) {
+        player.rotation -= ROTATION_SPEED;
+      }
+      if (input.right) {
+        player.rotation += ROTATION_SPEED;
+      }
+
+      // Normalize rotation
+      while (player.rotation < 0) player.rotation += Math.PI * 2;
+      while (player.rotation >= Math.PI * 2) player.rotation -= Math.PI * 2;
+
+      // Handle movement
+      const SPEED = 3.5;
+      let moved = false;
+      let dx = 0;
+      let dy = 0;
+
+      if (input.up) {
+        dx = Math.sin(player.rotation) * SPEED;
+        dy = -Math.cos(player.rotation) * SPEED;
+        moved = true;
+      } else if (input.down) {
+        dx = -Math.sin(player.rotation) * SPEED;
+        dy = Math.cos(player.rotation) * SPEED;
+        moved = true;
+      }
+
+      if (moved) {
+        const proposedX = Math.max(20, Math.min(player.x + dx, this.WORLD_WIDTH - 20));
+        const proposedY = Math.max(20, Math.min(player.y + dy, this.WORLD_HEIGHT - 20));
+
+        // Collision check
+        let hasCollision = false;
+        
+        // Tank-tank collision
+        for (const other of this.players.values()) {
+          if (other.id !== id) {
+            const dist = Math.hypot(other.x - proposedX, other.y - proposedY);
+            if (dist < 40) {
+              hasCollision = true;
+              break;
+            }
+          }
+        }
+
+        // Map collision
+        if (!hasCollision) {
+          for (const mapObj of this.mapObjects.values()) {
+            if (circleCollidesWithMapObject(proposedX, proposedY, this.TANK_RADIUS, mapObj)) {
+              if (mapObj.type === MapObjectType.WATER || mapObj.type === MapObjectType.CONCRETE_WALL || (mapObj.type === MapObjectType.BRICK_WALL && !mapObj.destroyed)) {
+                hasCollision = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!hasCollision) {
+          player.x = proposedX;
+          player.y = proposedY;
+        }
+      }
+
+      // Handle shooting
+      if (input.shoot) {
+        // Simple rate limiting for shooting (e.g., once every 500ms / 12-13 ticks)
+        // track last shoot time per player to enforce server-side
+        const now = Date.now();
+        const lastShootTime = this.playerLastShootTime.get(id) || 0;
+        if (now - lastShootTime >= 500) {
+          this.createBullet(id, player.x, player.y, {
+            x: Math.sin(player.rotation),
+            y: -Math.cos(player.rotation)
+          });
+          this.playerLastShootTime.set(id, now);
+        }
+        // Reset shoot input to avoid multiple bullets per single press if not throttled
+        input.shoot = false;
+      }
+
+      player.lastInputSequenceId = input.sequenceId;
+      // Clear input after processing to only process it once unless a new one arrives
+      // Actually, we might want to keep movement inputs but clear shoot
+      // But requirement says "Server processes only the latest input per player per tick"
+      // If client stops sending input, player should stop moving.
+      // So we should probably clear or mark as processed.
+      // If we clear, and client sends 10 inputs/sec but server ticks at 25Hz, some ticks will have no input.
+      // Requirement says "Throttle client input messages to 10–20 per second".
+      // So we should probably keep the last state and only update it when new message arrives.
+      // For movement, we keep it. For shooting, we must be careful.
+    });
+  }
+
+  handleInput(playerId: string, input: PlayerInput) {
+    const player = this.players.get(playerId);
+    if (!player) return;
+
+    // Sequence ID validation: only accept newer inputs
+    if (input.sequenceId <= player.lastInputSequenceId) return;
+
+    this.playerInputs.set(playerId, input);
+  }
+
+  private getSnapshot() {
+    return {
+      t: this.currentTick,
+      p: Array.from(this.players.values()).map(p => ({
+        id: p.id,
+        x: Math.round(p.x),
+        y: Math.round(p.y),
+        r: Math.round(p.rotation * 100),
+        h: Math.round(p.health),
+        s: p.score,
+        sid: p.lastInputSequenceId
+      })),
+      b: Array.from(this.bullets.values()).map(b => ({
+        id: b.id,
+        x: Math.round(b.x),
+        y: Math.round(b.y)
+      }))
+    };
   }
 
   addPlayer(id: string): Player {
@@ -78,17 +218,16 @@ export class Game extends EventEmitter {
       color,
       health: 100,
       score: 0,
+      lastInputSequenceId: 0,
     };
     this.players.set(id, player);
-    this.playerCommandIds.set(id, 0);
-    this.playerPendingCommands.set(id, []);
     return player;
   }
 
   removePlayer(id: string) {
     this.players.delete(id);
-    this.playerCommandIds.delete(id);
-    this.playerPendingCommands.delete(id);
+    this.playerInputs.delete(id);
+    this.playerLastShootTime.delete(id);
   }
 
   /**
