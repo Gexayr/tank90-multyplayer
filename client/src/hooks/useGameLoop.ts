@@ -170,7 +170,7 @@ export const useGameLoop = ({
       }
 
       tanks.forEach((t) => tankManager.ensureHighlightState(t));
-      bulletManager.updateBullets();
+      bulletManager.updateBullets(dt);
 
       if (camera && localId && localTankStateRef.current) {
           const cameraOffset = camera.follow(localTankStateRef.current.x, localTankStateRef.current.y);
@@ -295,14 +295,32 @@ export const useGameLoop = ({
         // Add or update bullets from snapshot
         snapshot.b.forEach((b: any) => {
           if (!currentBullets.has(b.id)) {
-            // We don't have direction/speed in snapshot, so we'd need them if we want to predict bullets
-            // But for now, let's just snap bullets to snapshot positions
-            bulletManager.createBullet(b.id, b.x, b.y, 0xFFFFFF, '', { x: 0, y: 0 }, 0);
+            // Create bullet with info from snapshot
+            bulletManager.createBullet(
+              b.id, 
+              b.x, 
+              b.y, 
+              0xFFFFFF, 
+              '', 
+              { x: b.dx / 100, y: b.dy / 100 }, 
+              b.sp
+            );
           } else {
             const bullet = currentBullets.get(b.id);
             if (bullet) {
-              bullet.sprite.x = b.x;
-              bullet.sprite.y = b.y;
+              // Smoothly correct bullet position if it's too far from snapshot
+              const dist = Math.hypot(bullet.sprite.x - b.x, bullet.sprite.y - b.y);
+              if (dist > 50) {
+                bullet.sprite.x = b.x;
+                bullet.sprite.y = b.y;
+              } else {
+                // Gentle correction
+                bullet.sprite.x += (b.x - bullet.sprite.x) * 0.1;
+                bullet.sprite.y += (b.y - bullet.sprite.y) * 0.1;
+              }
+              // Update direction and speed in case they changed
+              bullet.direction = { x: b.dx / 100, y: b.dy / 100 };
+              bullet.speed = b.sp;
             }
           }
         });

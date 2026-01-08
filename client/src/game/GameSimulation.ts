@@ -19,8 +19,8 @@ export interface MovementCommand {
 }
 
 export class GameSimulation {
-  private readonly SPEED = 3.5 * 25; // Base speed per tick (25Hz) converted to per second
-  private readonly ROTATION_SPEED = 0.1 * 25; // Base rotation per tick (25Hz) converted to per second
+  private readonly SPEED = 3.5 * 25 * 3.2; // Units per second (matching server)
+  private readonly ROTATION_SPEED = 0.1 * 25 * 3.6; // Rad per second (matching server)
   private readonly WORLD_WIDTH = 4000;
   private readonly WORLD_HEIGHT = 4000;
   private readonly TANK_RADIUS = 20;
