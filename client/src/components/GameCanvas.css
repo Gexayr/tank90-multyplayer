@@ -1,0 +1,115 @@
+/* GameCanvas.css - Responsive game canvas styling */
+
+.game-canvas-wrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  background-color: #000;
+}
+
+.game-canvas-container {
+  margin: 0 auto;
+  border: 2px solid #333;
+  box-sizing: border-box;
+  position: relative;
+  flex-shrink: 0;
+  width: 1280px;
+  height: 720px;
+}
+
+/* Mobile controls positioning */
+.mobile-joystick {
+  position: fixed !important;
+  left: 20px !important;
+  bottom: 20px !important;
+}
+
+.mobile-fire-button {
+  position: fixed !important;
+  bottom: 20px !important;
+  /* Position fire button in bottom-center, offset from joystick */
+  left: calc(50% + 60px) !important;
+  transform: translateX(-50%) !important;
+}
+
+/* Mobile layout adjustments */
+@media (max-width: 768px) {
+  .game-canvas-wrapper {
+    justify-content: center;
+    align-items: center;
+    width: 100vw;
+    height: 100vh;
+    padding: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+  }
+
+  .game-canvas-container {
+    /* Fill maximum available space while maintaining 16:9 aspect ratio (1280:720) */
+    width: 100vw;
+    height: calc(100vw * 720 / 1280); /* Maintain aspect ratio based on width */
+    max-width: calc(100vh * 1280 / 720); /* But don't exceed height-based calculation */
+    max-height: 100vh;
+    /* Center the canvas */
+    margin: 0 auto;
+    /* Ensure it scales properly */
+    position: relative;
+  }
+
+  /* Scale the canvas on mobile to fill container */
+  .game-canvas-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain;
+  }
+
+  /* Ensure controls are below the game area */
+  .mobile-joystick {
+    bottom: 20px !important;
+    left: 20px !important;
+  }
+
+  .mobile-fire-button {
+    bottom: 20px !important;
+    /* Center fire button, offset to the right of center to avoid joystick */
+    left: calc(50% + 60px) !important;
+    transform: translateX(-50%) !important;
+  }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+  .game-canvas-container {
+    /* On smaller screens, still fill screen but account for controls */
+    max-height: calc(100vh - 140px); /* Reserve less space for controls */
+    width: 100vw;
+    height: calc(100vw * 720 / 1280);
+    max-width: calc((100vh - 140px) * 1280 / 720);
+  }
+
+  .mobile-joystick {
+    width: 100px !important;
+    height: 100px !important;
+    bottom: 15px !important;
+    left: 15px !important;
+  }
+
+  .mobile-fire-button {
+    width: 70px !important;
+    height: 70px !important;
+    bottom: 15px !important;
+    left: calc(50% + 50px) !important;
+  }
+}
+
+/* Very small screens */
+@media (max-width: 360px) {
+  .mobile-fire-button {
+    left: calc(50% + 40px) !important;
+  }
+}
+

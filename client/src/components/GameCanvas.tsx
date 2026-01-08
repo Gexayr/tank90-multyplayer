@@ -1,495 +1,210 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as PIXI from 'pixi.js';
 import WebSocketService from '../services/websocket';
+import { Camera } from '../game/Camera';
+import { TankManager } from '../game/managers/TankManager';
+import { BulletManager } from '../game/managers/BulletManager';
+import { MapManager } from '../game/managers/MapManager';
+import { useInput } from '../hooks/useInput';
+import { useGameLoop } from '../hooks/useGameLoop';
+import Minimap from './Minimap';
+import Joystick from './Joystick';
+import './GameCanvas.css';
 
-interface Bullet {
-  sprite: PIXI.Graphics;
-  id: string;
-  playerId: string;
-  direction: { x: number; y: number };
-  speed: number;
-}
-
-interface Tank {
-  sprite: PIXI.Graphics;
-  rotation: number;
-  id: string;
-  health: number;
-  maxHealth: number;
-  healthBar: PIXI.Graphics;
-  score: number;
-  color: number;
-  highlight?: PIXI.Graphics;
-}
+const VIEWPORT_WIDTH = 1280;
+const VIEWPORT_HEIGHT = 720;
+const ASPECT_RATIO = VIEWPORT_WIDTH / VIEWPORT_HEIGHT;
+const WORLD_WIDTH = 4000;
+const WORLD_HEIGHT = 4000;
+const MINIMAP_WIDTH = 160;
+const MINIMAP_HEIGHT = 160;
+const SHOOT_BTN_SIZE = 80;
 
 const GameCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
-  const appRef = useRef<PIXI.Application | null>(null);
-  const tanksRef = useRef<Map<string, Tank>>(new Map());
-  const bulletsRef = useRef<Map<string, Bullet>>(new Map());
-  const minimapRef = useRef<HTMLCanvasElement | null>(null);
-  const keysRef = useRef<{ [key: string]: boolean }>({});
-  const lastShotTimeRef = useRef<number>(0);
-  const SHOT_COOLDOWN = 500; // milliseconds between shots
-  const wsService = WebSocketService.getInstance();
-  const [localScore, setLocalScore] = useState(0);
-  // Minimap configuration
-  const MINIMAP_WIDTH = 160; // 20% of 800
-  const MINIMAP_HEIGHT = 120; // 20% of 600
-  const WORLD_WIDTH = 800;
-  const WORLD_HEIGHT = 600;
-  const MINIMAP_SCALE_X = MINIMAP_WIDTH / WORLD_WIDTH;
-  const MINIMAP_SCALE_Y = MINIMAP_HEIGHT / WORLD_HEIGHT;
+  const minimapRef = useRef<HTMLCanvasElement>(null);
+  const scoreRef = useRef(0);
+  const [displayScore, setDisplayScore] = useState(0);
 
-  // Create health bar for tank
-  const createHealthBar = (tank: Tank) => {
-    const healthBar = new PIXI.Graphics();
-    healthBar.beginFill(0x00ff00);
-    healthBar.drawRect(-20, 30, 40, 5);
-    healthBar.endFill();
-    if (appRef.current) {
-      appRef.current.stage.addChild(healthBar);
-      // Ensure health bar is drawn behind the tank
-      healthBar.zIndex = 0;
+  const onScoreUpdate = useCallback((score: number) => {
+    if (score !== scoreRef.current) {
+      scoreRef.current = score;
+      setDisplayScore(score);
     }
-    return healthBar;
-  };
+  }, []);
 
-  // Update health bar with animation
-  const updateHealthBar = (tank: Tank) => {
-    const healthPercentage = tank.health / tank.maxHealth;
-    tank.healthBar.clear();
-    tank.healthBar.beginFill(0x00ff00);
-    tank.healthBar.drawRect(-20, 30, 40 * healthPercentage, 5);
-    tank.healthBar.endFill();
+  const [pixiApp, setPixiApp] = useState<PIXI.Application | null>(null);
+  const [worldContainer, setWorldContainer] = useState<PIXI.Container | null>(null);
+  const [camera, setCamera] = useState<Camera | null>(null);
+  const [tankManager, setTankManager] = useState<TankManager | null>(null);
+  const [bulletManager, setBulletManager] = useState<BulletManager | null>(null);
+  const [mapManager, setMapManager] = useState<MapManager | null>(null);
 
-    // Update position
-    tank.healthBar.x = tank.sprite.x;
-    tank.healthBar.y = tank.sprite.y;
-    tank.healthBar.rotation = tank.sprite.rotation;
-  };
+  const {
+    keysRef,
+    isTouchDevice,
+    joystickKnob,
+    joystickMagnitudeRef,
+    joystickVecRef,
+    handleJoystickStart,
+    handleJoystickMove,
+    handleJoystickEnd,
+  } = useInput();
+
+  const wsService = WebSocketService.getInstance();
+
+  const drawMinimap = useCallback(() => {
+    const canvas = minimapRef.current;
+    if (!canvas || !tankManager || !bulletManager || !mapManager) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const MINIMAP_SCALE_X = MINIMAP_WIDTH / WORLD_WIDTH;
+    const MINIMAP_SCALE_Y = MINIMAP_HEIGHT / WORLD_HEIGHT;
+
+    ctx.clearRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+
+    // Draw grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= MINIMAP_WIDTH; x += 40 * MINIMAP_SCALE_X) {
+      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, MINIMAP_HEIGHT); ctx.stroke();
+    }
+    for (let y = 0; y <= MINIMAP_HEIGHT; y += 40 * MINIMAP_SCALE_Y) {
+      ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(MINIMAP_WIDTH, y + 0.5); ctx.stroke();
+    }
+
+    // Draw players
+    const localId = wsService.getSocketId();
+    tankManager.getTanks().forEach((t) => {
+      const x = t.sprite.x * MINIMAP_SCALE_X;
+      const y = t.sprite.y * MINIMAP_SCALE_Y;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(t.rotation);
+      ctx.fillStyle = '#4f7f4f';
+      ctx.fillRect(-3, -3, 6, 6);
+      ctx.fillStyle = localId && t.id === localId ? 'rgba(255,255,0,0.9)' : 'rgba(255,0,0,0.9)';
+      ctx.beginPath(); ctx.moveTo(0, -6); ctx.lineTo(-2, -2); ctx.lineTo(2, -2); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    });
+
+    // Draw map objects
+    mapManager.getMapObjects().forEach((sprite, objId) => {
+      if (!sprite.visible) return;
+      ctx.fillStyle = objId.startsWith('brick') ? 'rgba(139, 69, 19, 0.6)' :
+                      objId.startsWith('concrete') ? 'rgba(128, 128, 128, 0.6)' :
+                      objId.startsWith('water') ? 'rgba(65, 105, 225, 0.5)' :
+                      objId.startsWith('tree') ? 'rgba(34, 139, 34, 0.5)' : 'rgba(255, 255, 255, 0.3)';
+      ctx.fillRect(sprite.x * MINIMAP_SCALE_X, sprite.y * MINIMAP_SCALE_Y, sprite.width * MINIMAP_SCALE_X, sprite.height * MINIMAP_SCALE_Y);
+    });
+
+    // Draw bullets
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    bulletManager.getBullets().forEach((b) => {
+      ctx.beginPath(); ctx.arc(b.sprite.x * MINIMAP_SCALE_X, b.sprite.y * MINIMAP_SCALE_Y, 1.5, 0, Math.PI * 2); ctx.fill();
+    });
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.strokeRect(0.5, 0.5, MINIMAP_WIDTH - 1, MINIMAP_HEIGHT - 1);
+  }, [wsService, tankManager, bulletManager, mapManager]);
+
+  const { handleShoot } = useGameLoop({
+    app: pixiApp,
+    world: worldContainer,
+    camera: camera,
+    tankManager: tankManager,
+    bulletManager: bulletManager,
+    mapManager: mapManager,
+    keysRef,
+    isTouchDevice,
+    joystickMagnitudeRef,
+    joystickVecRef,
+    onScoreUpdate: onScoreUpdate,
+    drawMinimap,
+  });
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    // Create PIXI Application
-    const app = new PIXI.Application({
-      width: 800,
-      height: 600,
-      backgroundColor: 0x000000,
-      resolution: window.devicePixelRatio || 1,
-    });
+    const isMobile = window.innerWidth <= 768;
+    let vWidth = VIEWPORT_WIDTH, vHeight = VIEWPORT_HEIGHT;
+    if (isMobile) {
+      const sW = window.innerWidth, sH = window.innerHeight;
+      vWidth = sW; vHeight = sW / ASPECT_RATIO;
+      if (sH / ASPECT_RATIO < vWidth) { vHeight = sH; vWidth = sH * ASPECT_RATIO; }
+    }
 
-    // Ensure we can control draw order via zIndex
+    const cam = new Camera({ viewportWidth: vWidth, viewportHeight: vHeight, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT });
+    setCamera(cam);
+
+    const app = new PIXI.Application({ width: vWidth, height: vHeight, backgroundColor: 0x2a2a2a, resolution: window.devicePixelRatio || 1, autoDensity: true });
     app.stage.sortableChildren = true;
-
-    // Add canvas to DOM
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
-    appRef.current = app;
+    setPixiApp(app);
 
-    // Draw background grid
+    const world = new PIXI.Container();
+    world.sortableChildren = true;
+    app.stage.addChild(world);
+    setWorldContainer(world);
+
     const grid = new PIXI.Graphics();
-    const gridSize = 40; // size of each cell
-    grid.lineStyle(1, 0x444444, 0.4);
-    for (let x = 0; x <= app.view.width; x += gridSize) {
-      grid.moveTo(x + 0.5, 0);
-      grid.lineTo(x + 0.5, app.view.height);
-    }
-    for (let y = 0; y <= app.view.height; y += gridSize) {
-      grid.moveTo(0, y + 0.5);
-      grid.lineTo(app.view.width, y + 0.5);
-    }
-    grid.zIndex = -10; // behind everything
-    app.stage.addChild(grid);
+    grid.lineStyle(1, 0x555555, 0.4);
+    for (let x = 0; x <= WORLD_WIDTH; x += 40) { grid.moveTo(x + 0.5, 0); grid.lineTo(x + 0.5, WORLD_HEIGHT); }
+    for (let y = 0; y <= WORLD_HEIGHT; y += 40) { grid.moveTo(0, y + 0.5); grid.lineTo(WORLD_WIDTH, y + 0.5); }
+    grid.zIndex = -10;
+    world.addChild(grid);
 
-    // Connect to WebSocket server
+    setTankManager(new TankManager(world));
+    setBulletManager(new BulletManager(world));
+    setMapManager(new MapManager(world));
+
     wsService.connect();
 
-    // Minimap drawing (HTML canvas overlay)
-    const drawMinimap = () => {
-      const canvas = minimapRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Resize in case CSS changed pixel ratio
-      if (canvas.width !== MINIMAP_WIDTH || canvas.height !== MINIMAP_HEIGHT) {
-        canvas.width = MINIMAP_WIDTH;
-        canvas.height = MINIMAP_HEIGHT;
+    const handleResize = () => {
+      const isMob = window.innerWidth <= 768;
+      let newW = VIEWPORT_WIDTH, newH = VIEWPORT_HEIGHT;
+      if (isMob) {
+        newW = window.innerWidth; newH = window.innerHeight;
+        let cW = newW, cH = newW / ASPECT_RATIO;
+        if (newH / ASPECT_RATIO < cW) { cH = newH; cW = newH * ASPECT_RATIO; }
+        newW = cW; newH = cH;
       }
-
-      // Clear
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Background (semi-transparent dark)
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Grid (optional, very light)
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = 1;
-      const cellX = 40 * MINIMAP_SCALE_X;
-      const cellY = 40 * MINIMAP_SCALE_Y;
-      for (let x = 0; x <= canvas.width; x += cellX) {
-        ctx.beginPath();
-        ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, canvas.height);
-        ctx.stroke();
-      }
-      for (let y = 0; y <= canvas.height; y += cellY) {
-        ctx.beginPath();
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(canvas.width, y + 0.5);
-        ctx.stroke();
-      }
-
-      // Draw players
-      tanksRef.current.forEach((t) => {
-        const x = t.sprite.x * MINIMAP_SCALE_X;
-        const y = t.sprite.y * MINIMAP_SCALE_Y;
-        const isLocal = wsService.getSocketId() && t.id === wsService.getSocketId();
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(t.rotation);
-        // body
-        ctx.fillStyle = `#${t.color.toString(16).padStart(6,'0')}`;
-        ctx.fillRect(-3, -3, 6, 6);
-        // direction tip
-        ctx.fillStyle = isLocal ? 'rgba(255,255,0,0.9)' : 'rgba(255,0,0,0.9)';
-        ctx.beginPath();
-        ctx.moveTo(0, -6);
-        ctx.lineTo(-2, -2);
-        ctx.lineTo(2, -2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      });
-
-      // Draw bullets
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      bulletsRef.current.forEach((b) => {
-        const x = b.sprite.x * MINIMAP_SCALE_X;
-        const y = b.sprite.y * MINIMAP_SCALE_Y;
-        ctx.beginPath();
-        ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      // Border
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+      app.renderer.resize(newW, newH);
+      cam.setViewportSize(newW, newH);
     };
 
-    // Helper to create or remove highlight for local tank
-    const ensureHighlightState = (tank: Tank) => {
-      const localId = wsService.getSocketId();
-      const isLocal = localId && tank.id === localId;
-      if (isLocal) {
-        if (!tank.highlight && appRef.current) {
-          const hl = new PIXI.Graphics();
-          hl.lineStyle(0.8, 0xffff00, 0.5);
-          hl.drawRoundedRect(-23, -23, 46, 46, 8);
-          hl.zIndex = 0.75; // between health bar and tank
-          appRef.current.stage.addChild(hl);
-          tank.highlight = hl;
-        }
-      } else {
-        if (tank.highlight && appRef.current) {
-          appRef.current.stage.removeChild(tank.highlight);
-          tank.highlight.destroy();
-          delete tank.highlight;
-        }
-      }
-      // Sync position if exists
-      if (tank.highlight) {
-        tank.highlight.x = tank.sprite.x;
-        tank.highlight.y = tank.sprite.y;
-        tank.highlight.rotation = tank.sprite.rotation;
-      }
-    };
+    window.addEventListener('resize', handleResize);
 
-    // Create tank function
-    const createTank = (id: string, x: number, y: number, color: number, health: number, score: number) => {
-      const tank = new PIXI.Graphics();
-      tank.beginFill(color);
-      tank.drawRect(-20, -20, 40, 40); // Center the tank
-      tank.endFill();
-      
-      // Add direction indicator (triangle)
-      tank.beginFill(0xff0000);
-      tank.moveTo(0, -25);
-      tank.lineTo(-5, -15);
-      tank.lineTo(5, -15);
-      tank.endFill();
-      
-      tank.x = x;
-      tank.y = y;
-      // Ensure tank draws above health bar
-      tank.zIndex = 1;
-      app.stage.addChild(tank);
-
-      const newTank: Tank = {
-        sprite: tank,
-        rotation: 0,
-        id,
-        health,
-        maxHealth: 100,
-        healthBar: new PIXI.Graphics(),
-        score,
-        color,
-      };
-      newTank.healthBar = createHealthBar(newTank);
-
-      tanksRef.current.set(id, newTank);
-      updateHealthBar(newTank);
-      ensureHighlightState(newTank);
-    };
-
-    // Create bullet function
-    const createBullet = (id: string, x: number, y: number, color: number, playerId: string, direction: { x: number; y: number }, speed: number) => {
-      const bullet = new PIXI.Graphics();
-      bullet.beginFill(color);
-      bullet.drawCircle(0, 0, 4);
-      bullet.endFill();
-      bullet.x = x;
-      bullet.y = y;
-      app.stage.addChild(bullet);
-
-      bulletsRef.current.set(id, {
-        sprite: bullet,
-        id,
-        playerId,
-        direction,
-        speed,
-      });
-    };
-
-    // Calculate direction vector from rotation
-    const getDirectionFromRotation = (rotation: number) => {
-      return {
-        x: Math.sin(rotation),
-        y: -Math.cos(rotation),
-      };
-    };
-
-    // WebSocket event handlers
-    wsService.onPlayerJoin((player) => {
-      createTank(player.id, player.x, player.y, player.color, player.health, player.score);
-    });
-
-    wsService.onPlayerLeave((playerId) => {
-      const tank = tanksRef.current.get(playerId);
-      if (tank && appRef.current) {
-        appRef.current.stage.removeChild(tank.sprite);
-        appRef.current.stage.removeChild(tank.healthBar);
-        if (tank.highlight) {
-          appRef.current.stage.removeChild(tank.highlight);
-          tank.highlight.destroy();
-        }
-        tanksRef.current.delete(playerId);
-      }
-    });
-
-    wsService.onPlayerMove((data) => {
-      const tank = tanksRef.current.get(data.id);
-      if (tank) {
-        tank.sprite.x = data.x;
-        tank.sprite.y = data.y;
-        tank.rotation = data.rotation;
-        tank.sprite.rotation = data.rotation;
-        updateHealthBar(tank);
-        ensureHighlightState(tank);
-      }
-    });
-
-    wsService.onGameStateUpdate((state) => {
-      // Create tanks for all players
-      state.players.forEach((player: any) => {
-        if (!tanksRef.current.has(player.id)) {
-          createTank(player.id, player.x, player.y, player.color, player.health, player.score);
-        } else {
-          const t = tanksRef.current.get(player.id)!;
-          ensureHighlightState(t);
-        }
-      });
-
-      // Create bullets
-      state.bullets.forEach((bullet: any) => {
-        if (!bulletsRef.current.has(bullet.id)) {
-          const tank = tanksRef.current.get(bullet.playerId);
-          if (tank) {
-            const color = 0xFFFFFF;
-            createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
-          }
-        }
-      });
-    });
-
-    wsService.onBulletCreate((bullet) => {
-      const tank = tanksRef.current.get(bullet.playerId);
-      if (tank) {
-        const color = 0xFFFFFF;
-        createBullet(bullet.id, bullet.x, bullet.y, color, bullet.playerId, bullet.direction, bullet.speed);
-      }
-    });
-
-    wsService.onBulletRemove((bulletId) => {
-      const bullet = bulletsRef.current.get(bulletId);
-      if (bullet && appRef.current) {
-        appRef.current.stage.removeChild(bullet.sprite);
-        bulletsRef.current.delete(bulletId);
-      }
-    });
-
-    wsService.onHealthUpdate((data) => {
-      const tank = tanksRef.current.get(data.id);
-      if (tank) {
-        tank.health = data.health;
-        updateHealthBar(tank);
-      }
-    });
-
-    wsService.onScoreUpdate((data) => {
-      const tank = tanksRef.current.get(data.playerId);
-      if (tank) {
-        tank.score = data.score;
-        if (tank.id === wsService.getSocketId()) {
-          setLocalScore(tank.score);
-        }
-      }
-    });
-
-    // Keyboard event listeners
-    const handleKeyDown = (e: KeyboardEvent) => {
-      keysRef.current[e.key] = true;
-
-      // Handle shooting
-      if (e.key === ' ' && Date.now() - lastShotTimeRef.current > SHOT_COOLDOWN) {
-        const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-        if (localTank) {
-          const direction = getDirectionFromRotation(localTank.rotation);
-          wsService.sendPlayerShoot(
-            localTank.sprite.x + direction.x * 25,
-            localTank.sprite.y + direction.y * 25,
-            direction
-          );
-          lastShotTimeRef.current = Date.now();
-        }
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      keysRef.current[e.key] = false;
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    // Game loop
-    const gameLoop = () => {
-      const rotationSpeed = 0.1;
-
-      // Update local player
-      const localTank = tanksRef.current.get(wsService.getSocketId() || '');
-      if (localTank) {
-        let moved = false;
-        let newRotation = localTank.rotation;
-
-        if (keysRef.current['ArrowLeft']) {
-          newRotation -= rotationSpeed;
-          moved = true;
-        }
-        if (keysRef.current['ArrowRight']) {
-          newRotation += rotationSpeed;
-          moved = true;
-        }
-
-        if (moved) {
-          wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, newRotation);
-        }
-
-        if (keysRef.current['ArrowUp'] || keysRef.current['ArrowDown']) {
-            wsService.sendPlayerMove(localTank.sprite.x, localTank.sprite.y, localTank.rotation, keysRef.current['ArrowUp'] ? 'forward' : 'backward');
-        }
-      }
-
-      // Keep highlight synced (in case socket id becomes available later)
-      tanksRef.current.forEach((t) => ensureHighlightState(t));
-
-      // Advance bullets locally so their movement is visible between server events
-      bulletsRef.current.forEach((b) => {
-        b.sprite.x += b.direction.x * b.speed;
-        b.sprite.y += b.direction.y * b.speed;
-      });
-
-      // Draw minimap overlay
-      drawMinimap();
-    };
-
-    // Add game loop to PIXI ticker
-    app.ticker.add(gameLoop);
-
-    // Cleanup function
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      app.ticker.remove(gameLoop);
+      window.removeEventListener('resize', handleResize);
       wsService.disconnect();
-      if (appRef.current) {
-        // Clean up all tank-related graphics
-        tanksRef.current.forEach((t) => {
-          if (t.highlight) t.highlight.destroy();
-          t.healthBar.destroy();
-          t.sprite.destroy();
-        });
-        appRef.current.destroy(true, true);
-      }
+      app.destroy(true, true);
     };
   }, []);
 
+  const joystickContainerRef = useRef<HTMLDivElement>(null);
+
   return (
-    <div style={{ position: 'relative' }}>
-      <div
-        ref={canvasRef}
-        style={{
-          width: '800px',
-          height: '600px',
-          margin: '0 auto',
-          border: '2px solid #333',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          color: 'white',
-          fontSize: '20px',
-          textShadow: '2px 2px 2px black',
-        }}
-      >
-        Score: {localScore}
-      </div>
-      <canvas
-        ref={minimapRef}
-        style={{
-          position: 'fixed',
-          right: '10px',
-          bottom: '10px',
-          width: MINIMAP_WIDTH,
-          height: MINIMAP_HEIGHT,
-          opacity: 0.8,
-          pointerEvents: 'none',
-          zIndex: 1000,
-          border: '1px solid rgba(255,255,255,0.2)',
-          borderRadius: '4px',
-          boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
-        }}
-      />
+    <div className="game-canvas-wrapper">
+      <div ref={canvasRef} className="game-canvas-container" />
+      <Minimap canvasRef={minimapRef} width={MINIMAP_WIDTH} height={MINIMAP_HEIGHT} />
+      {isTouchDevice && (
+        <>
+          <Joystick
+            joystickRef={joystickContainerRef}
+            onStart={handleJoystickStart}
+            onMove={handleJoystickMove}
+            onEnd={handleJoystickEnd}
+            knobPos={joystickKnob}
+          />
+          <div onTouchStart={handleShoot} className="mobile-fire-button" style={{ width: SHOOT_BTN_SIZE, height: SHOOT_BTN_SIZE, borderRadius: SHOOT_BTN_SIZE / 2 }} />
+        </>
+      )}
     </div>
   );
 };
 
-export default GameCanvas; 
+export default GameCanvas;

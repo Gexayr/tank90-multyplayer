@@ -20,9 +20,18 @@ const allowedOrigins = allowedOriginsEnv
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
+<<<<<<< HEAD
     origin: allowedOrigins,
     methods: ["GET", "POST"],
   },
+=======
+    origin: process.env.FRONT_URI || "http://localhost:5173",
+    methods: ["GET", "POST"]
+  },
+  transports: ['websocket'],
+  pingInterval: 2000,
+  pingTimeout: 5000
+>>>>>>> 1f52e872a47a6c8586bf5b6ee822e5d8353abaf9
 });
 
 // Apply CORS to HTTP routes as well
@@ -65,30 +74,18 @@ io.on('connection', (socket) => {
 
   const player = game.addPlayer(socket.id);
 
-  // Send current game state to the new player
+  // Send current game state to the new player (includes map objects)
   socket.emit('game-state', game.getGameState());
+  
+  // Also send map objects separately for initial load
+  socket.emit('map-objects', game.getMapObjects());
 
   // Notify other players about the new player
   socket.broadcast.emit('player-join', player);
 
-  // Handle player movement
-  socket.on('player-move', (data: { x: number; y: number; rotation: number, direction?: 'forward' | 'backward' }) => {
-    game.movePlayer(socket.id, data.x, data.y, data.rotation, data.direction);
-    const player = game.getGameState().players.find(p => p.id === socket.id);
-    if (player) {
-      io.emit('player-move', {
-        id: socket.id,
-        x: player.x,
-        y: player.y,
-        rotation: player.rotation
-      });
-    }
-  });
-
-  // Handle player shooting
-  socket.on('player-shoot', (data: { x: number; y: number; direction: { x: number; y: number } }) => {
-    const bullet = game.createBullet(socket.id, data.x, data.y, data.direction);
-    io.emit('bullet-create', bullet);
+  // Handle player input
+  socket.on('player-input', (input: any) => {
+    game.handleInput(socket.id, input);
   });
 
   // Handle disconnection
@@ -99,11 +96,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// Game event handling
-game.on('bullet-removed', (bulletId) => {
-  io.emit('bullet-remove', bulletId);
+// Broadcast snapshots to all players
+game.on('tick', (snapshot) => {
+  io.emit('s', snapshot);
 });
 
+// Game event handling
 game.on('health-update', (data) => {
   io.emit('health-update', data);
 });
@@ -116,6 +114,13 @@ game.on('player-removed', (playerId) => {
   io.emit('player-leave', playerId);
 });
 
+<<<<<<< HEAD
+=======
+game.on('map-update', (data) => {
+  io.emit('map-update', data);
+});
+
+>>>>>>> 1f52e872a47a6c8586bf5b6ee822e5d8353abaf9
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

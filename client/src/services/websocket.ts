@@ -16,11 +16,16 @@ class WebSocketService {
 
   connect() {
     console.log('Connecting to server:', this.SERVER_URL);
+<<<<<<< HEAD
     // Prefer polling first to work around reverse proxies/CDNs that do not pass WebSocket upgrades.
     // Socket.IO will attempt to upgrade to WebSocket when possible.
     this.socket = io(this.SERVER_URL, {
       transports: ['polling', 'websocket'],
       withCredentials: false,
+=======
+    this.socket = io(this.SERVER_URL, {
+      transports: ['websocket']
+>>>>>>> 1f52e872a47a6c8586bf5b6ee822e5d8353abaf9
     });
 
     this.socket.on('connect', () => {
@@ -43,10 +48,24 @@ class WebSocketService {
     }
   }
 
-  // Player movement
-  sendPlayerMove(x: number, y: number, rotation: number, direction?: 'forward' | 'backward') {
+  // Player input
+  sendPlayerInput(input: {
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    shoot: boolean;
+    sequenceId: number;
+  }) {
     if (this.socket) {
-      this.socket.emit('player-move', { x, y, rotation, direction });
+      this.socket.emit('player-input', input);
+    }
+  }
+
+  // Player movement - now sends only input data and command ID
+  sendPlayerMove(commandId: number, rotation: number, direction?: 'forward' | 'backward') {
+    if (this.socket) {
+      this.socket.emit('player-move', { commandId, rotation, direction });
     }
   }
 
@@ -106,6 +125,42 @@ class WebSocketService {
   onGameStateUpdate(callback: (state: any) => void) {
     if (this.socket) {
       this.socket.on('game-state', callback);
+    }
+  }
+
+  // Snapshot update
+  onSnapshot(callback: (snapshot: {
+    t: number;
+    p: any[];
+    b: any[];
+  }) => void) {
+    if (this.socket) {
+      this.socket.on('s', callback);
+    }
+  }
+
+  // State update with command confirmation
+  onStateUpdate(callback: (data: { 
+    players: any[]; 
+    bullets: any[]; 
+    latestConfirmedCommandId?: number;
+    authoritativeState?: { x: number; y: number; rotation: number };
+  }) => void) {
+    if (this.socket) {
+      this.socket.on('state-update', callback);
+    }
+  }
+
+  // Map objects and updates
+  onMapObjects(callback: (objects: any[]) => void) {
+    if (this.socket) {
+      this.socket.on('map-objects', callback);
+    }
+  }
+
+  onMapUpdate(callback: (data: { objectId: string; destroyed: boolean }) => void) {
+    if (this.socket) {
+      this.socket.on('map-update', callback);
     }
   }
 
