@@ -43,10 +43,10 @@ export class BulletManager {
     }
   }
 
-  updateBullets() {
+  updateBullets(dt: number) {
     this.bullets.forEach((b) => {
-      b.sprite.x += b.direction.x * b.speed;
-      b.sprite.y += b.direction.y * b.speed;
+      b.sprite.x += b.direction.x * b.speed * dt;
+      b.sprite.y += b.direction.y * b.speed * dt;
     });
   }
 }

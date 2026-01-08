@@ -49,8 +49,14 @@ export class Game extends EventEmitter {
   private playerInputs = new Map<string, PlayerInput>();
   private playerLastShootTime = new Map<string, number>();
   private currentTick = 0;
+  private lastTickTime = Date.now();
   private readonly TICK_RATE = 25; // 25 Hz
   private readonly TICK_DURATION = 1000 / 25;
+
+  // Constants (units per second)
+  private readonly TANK_SPEED = 3.5 * 25 * 3.2; // ~140 units/sec
+  private readonly ROTATION_SPEED = 0.1 * 25 * 3.6; // ~4.5 rad/sec
+  private readonly BULLET_SPEED = 5 * 25 * 5; // ~312.5 units/sec
 
   constructor() {
     super();
@@ -66,30 +72,34 @@ export class Game extends EventEmitter {
     });
     
     // Fixed server tick loop
+    this.lastTickTime = Date.now();
     setInterval(() => {
       this.tick();
     }, this.TICK_DURATION);
   }
 
   private tick() {
+    const now = Date.now();
+    const dt = (now - this.lastTickTime) / 1000;
+    this.lastTickTime = now;
+
     this.currentTick++;
-    this.processInputs();
-    this.update();
+    this.processInputs(dt);
+    this.update(dt);
     this.emit('tick', this.getSnapshot());
   }
 
-  private processInputs() {
+  private processInputs(dt: number) {
     this.players.forEach((player, id) => {
       const input = this.playerInputs.get(id);
       if (!input) return;
 
       // Handle rotation
-      const ROTATION_SPEED = 0.1;
       if (input.left) {
-        player.rotation -= ROTATION_SPEED;
+        player.rotation -= this.ROTATION_SPEED * dt;
       }
       if (input.right) {
-        player.rotation += ROTATION_SPEED;
+        player.rotation += this.ROTATION_SPEED * dt;
       }
 
       // Normalize rotation
@@ -97,18 +107,17 @@ export class Game extends EventEmitter {
       while (player.rotation >= Math.PI * 2) player.rotation -= Math.PI * 2;
 
       // Handle movement
-      const SPEED = 3.5;
       let moved = false;
       let dx = 0;
       let dy = 0;
 
       if (input.up) {
-        dx = Math.sin(player.rotation) * SPEED;
-        dy = -Math.cos(player.rotation) * SPEED;
+        dx = Math.sin(player.rotation) * this.TANK_SPEED * dt;
+        dy = -Math.cos(player.rotation) * this.TANK_SPEED * dt;
         moved = true;
       } else if (input.down) {
-        dx = -Math.sin(player.rotation) * SPEED;
-        dy = Math.cos(player.rotation) * SPEED;
+        dx = -Math.sin(player.rotation) * this.TANK_SPEED * dt;
+        dy = Math.cos(player.rotation) * this.TANK_SPEED * dt;
         moved = true;
       }
 
@@ -203,7 +212,10 @@ export class Game extends EventEmitter {
       b: Array.from(this.bullets.values()).map(b => ({
         id: b.id,
         x: Math.round(b.x),
-        y: Math.round(b.y)
+        y: Math.round(b.y),
+        dx: Math.round(b.direction.x * 100),
+        dy: Math.round(b.direction.y * 100),
+        sp: Math.round(b.speed)
       }))
     };
   }
@@ -269,6 +281,10 @@ export class Game extends EventEmitter {
 
     // Process commands sequentially
     let collided = false;
+    // For command processing, we assume a constant dt based on TICK_RATE (25Hz)
+    // because each command is essentially one tick's worth of movement from the client.
+    const commandDt = 1 / 25; 
+
     while (pendingCommands.length > 0) {
       const nextCommand = pendingCommands[0];
       
@@ -279,7 +295,6 @@ export class Game extends EventEmitter {
 
       // Apply the command
       player.rotation = nextCommand.rotation;
-      const speed = 3.5; // Reduced from 5 (30% reduction for better control)
       let moved = false;
 
       if (nextCommand.direction) {
@@ -294,11 +309,11 @@ export class Game extends EventEmitter {
         let proposedX = player.x;
         let proposedY = player.y;
         if (nextCommand.direction === 'forward') {
-          proposedX += dirX * speed;
-          proposedY += dirY * speed;
+          proposedX += dirX * this.TANK_SPEED * commandDt;
+          proposedY += dirY * this.TANK_SPEED * commandDt;
         } else {
-          proposedX -= dirX * speed;
-          proposedY -= dirY * speed;
+          proposedX -= dirX * this.TANK_SPEED * commandDt;
+          proposedY -= dirY * this.TANK_SPEED * commandDt;
         }
 
         // Keep within bounds
@@ -402,7 +417,7 @@ export class Game extends EventEmitter {
       x,
       y,
       direction,
-      speed: 5, // Reduced from 10 (50% reduction for more visible bullet travel)
+      speed: this.BULLET_SPEED,
     };
     this.bullets.set(bullet.id, bullet);
     return bullet;
@@ -455,83 +470,88 @@ export class Game extends EventEmitter {
     return this.playerCommandIds.get(playerId) || 0;
   }
 
-  private update() {
+  private update(dt: number) {
     // Update bullets
-    this.bullets.forEach((bullet, bulletId) => {
-      bullet.x += bullet.direction.x * bullet.speed;
-      bullet.y += bullet.direction.y * bullet.speed;
+    const subSteps = 2;
+    const subDt = dt / subSteps;
 
-      // Remove bullets that are out of bounds
-      if (bullet.x < 0 || bullet.x > this.WORLD_WIDTH || bullet.y < 0 || bullet.y > this.WORLD_HEIGHT) {
-        this.bullets.delete(bulletId);
-        this.emit('bullet-removed', bulletId);
-        return;
-      }
+    for (let step = 0; step < subSteps; step++) {
+      this.bullets.forEach((bullet, bulletId) => {
+        bullet.x += bullet.direction.x * bullet.speed * subDt;
+        bullet.y += bullet.direction.y * bullet.speed * subDt;
 
-      // Check bullet collision with map objects (except water and trees)
-      let bulletHit = false;
-      this.mapObjects.forEach((mapObj) => {
-        if (!bulletHit && pointInMapObject(bullet.x, bullet.y, mapObj)) {
-          // Bullets fly over water (no collision)
-          if (mapObj.type === MapObjectType.WATER || mapObj.type === MapObjectType.TREE) {
-            return;
-          }
-
-          // Bullets hit concrete walls (blocked, no destruction)
-          if (mapObj.type === MapObjectType.CONCRETE_WALL) {
-            this.bullets.delete(bulletId);
-            this.emit('bullet-removed', bulletId);
-            bulletHit = true;
-            return;
-          }
-
-          // Bullets destroy brick walls
-          if (mapObj.type === MapObjectType.BRICK_WALL && !mapObj.destroyed) {
-            mapObj.destroyed = true;
-            this.bullets.delete(bulletId);
-            this.emit('bullet-removed', bulletId);
-            this.emit('map-update', { objectId: mapObj.id, destroyed: true });
-            bulletHit = true;
-            return;
-          }
+        // Remove bullets that are out of bounds
+        if (bullet.x < 0 || bullet.x > this.WORLD_WIDTH || bullet.y < 0 || bullet.y > this.WORLD_HEIGHT) {
+          this.bullets.delete(bulletId);
+          this.emit('bullet-removed', bulletId);
+          return;
         }
-      });
 
-      // Check for collisions with players (only if bullet didn't hit a wall)
-      if (!bulletHit) {
-        this.players.forEach((player) => {
-          if (player.id !== bullet.playerId) {
-            const distance = Math.sqrt(Math.pow(player.x - bullet.x, 2) + Math.pow(player.y - bullet.y, 2));
-            if (distance < this.TANK_RADIUS) {
+        // Check bullet collision with map objects (except water and trees)
+        let bulletHit = false;
+        this.mapObjects.forEach((mapObj) => {
+          if (!bulletHit && pointInMapObject(bullet.x, bullet.y, mapObj)) {
+            // Bullets fly over water (no collision)
+            if (mapObj.type === MapObjectType.WATER || mapObj.type === MapObjectType.TREE) {
+              return;
+            }
+
+            // Bullets hit concrete walls (blocked, no destruction)
+            if (mapObj.type === MapObjectType.CONCRETE_WALL) {
               this.bullets.delete(bulletId);
               this.emit('bullet-removed', bulletId);
-              player.health -= 10;
-              this.emit('health-update', { id: player.id, health: player.health });
-
-              if (player.health <= 0) {
-                const killer = this.players.get(bullet.playerId);
-                if (killer) {
-                  killer.score += 100;
-                  this.saveScore(killer.id, killer.score);
-                  this.emit('score-update', { playerId: killer.id, score: killer.score });
-                }
-                this.removePlayer(player.id);
-                this.emit('player-removed', player.id);
-              }
               bulletHit = true;
+              return;
+            }
+
+            // Bullets destroy brick walls
+            if (mapObj.type === MapObjectType.BRICK_WALL && !mapObj.destroyed) {
+              mapObj.destroyed = true;
+              this.bullets.delete(bulletId);
+              this.emit('bullet-removed', bulletId);
+              this.emit('map-update', { objectId: mapObj.id, destroyed: true });
+              bulletHit = true;
+              return;
             }
           }
         });
-      }
-    });
+
+        // Check for collisions with players (only if bullet didn't hit a wall)
+        if (!bulletHit) {
+          this.players.forEach((player) => {
+            if (player.id !== bullet.playerId) {
+              const distance = Math.sqrt(Math.pow(player.x - bullet.x, 2) + Math.pow(player.y - bullet.y, 2));
+              if (distance < this.TANK_RADIUS) {
+                this.bullets.delete(bulletId);
+                this.emit('bullet-removed', bulletId);
+                player.health -= 10;
+                this.emit('health-update', { id: player.id, health: player.health });
+
+                if (player.health <= 0) {
+                  const killer = this.players.get(bullet.playerId);
+                  if (killer) {
+                    killer.score += 100;
+                    this.saveScore(killer.id, killer.score);
+                    this.emit('score-update', { playerId: killer.id, score: killer.score });
+                  }
+                  this.removePlayer(player.id);
+                  this.emit('player-removed', player.id);
+                }
+                bulletHit = true;
+              }
+            }
+          });
+        }
+      });
+    }
 
     // Health regeneration: fully recover in ~40 seconds
-    // Regen per tick (60 FPS): 100 HP / (40s * 60fps) = 0.041666... HP per tick
-    const REGEN_PER_TICK = 100 / (40 * 60);
+    // Regen per second: 100 HP / 40s = 2.5 HP per second
+    const REGEN_PER_SECOND = 100 / 40;
     this.players.forEach((player) => {
       if (player.health > 0 && player.health < 100) {
         const before = player.health;
-        player.health = Math.min(100, player.health + REGEN_PER_TICK);
+        player.health = Math.min(100, player.health + REGEN_PER_SECOND * dt);
         // Emit only when integer value changes to reduce network traffic
         if (Math.floor(player.health) !== Math.floor(before) || player.health === 100) {
           this.emit('health-update', { id: player.id, health: Math.round(player.health) });
