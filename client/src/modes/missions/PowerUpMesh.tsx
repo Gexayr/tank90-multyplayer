@@ -2,34 +2,37 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { PowerUp } from '@shared/missions-types';
-
-const POWERUP_COLORS: Record<PowerUp['type'], string> = {
-  star: '#FFD700',
-  speed: '#00FF7F',
-  shield: '#00BFFF',
-  life: '#FF69B4',
-};
+import { POWERUP_INFO, powerUpTexture } from './powerUpIcons';
 
 interface PowerUpMeshProps {
   powerUp: PowerUp;
 }
 
+/** Bonus icon that always faces the camera, bobs and pulses over a glowing ring */
 export function PowerUpMesh({ powerUp }: PowerUpMeshProps) {
-  const groupRef = useRef<THREE.Group>(null);
+  const spriteRef = useRef<THREE.Sprite>(null);
+  const ringRef = useRef<THREE.MeshBasicMaterial>(null);
 
   useFrame(({ clock }) => {
-    if (!groupRef.current) return;
-    groupRef.current.position.y = 0.3 + Math.sin(clock.elapsedTime * 2 + powerUp.position.x) * 0.15;
-    groupRef.current.rotation.y += 0.03;
+    const t = clock.elapsedTime * 3 + powerUp.position.x;
+    if (spriteRef.current) {
+      spriteRef.current.position.y = 0.7 + Math.sin(t) * 0.08;
+      const scale = 0.95 + Math.sin(t * 1.3) * 0.06;
+      spriteRef.current.scale.set(scale, scale, 1);
+    }
+    if (ringRef.current) ringRef.current.opacity = 0.35 + Math.sin(t * 1.3) * 0.2;
   });
 
-  const color = POWERUP_COLORS[powerUp.type];
+  const { color } = POWERUP_INFO[powerUp.type];
 
   return (
-    <group ref={groupRef} position={[powerUp.position.x, 0.3, powerUp.position.z]}>
-      <mesh>
-        <octahedronGeometry args={[0.3, 0]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.2} />
+    <group position={[powerUp.position.x, 0, powerUp.position.z]}>
+      <sprite ref={spriteRef} position={[0, 0.7, 0]}>
+        <spriteMaterial map={powerUpTexture(powerUp.type)} transparent depthWrite={false} />
+      </sprite>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <ringGeometry args={[0.35, 0.5, 24]} />
+        <meshBasicMaterial ref={ringRef} color={color} transparent opacity={0.4} depthWrite={false} />
       </mesh>
     </group>
   );

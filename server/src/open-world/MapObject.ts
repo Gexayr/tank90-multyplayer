@@ -19,6 +19,80 @@ export interface MapObject {
   destroyed?: boolean; // For brick walls
 }
 
+const FOREST_COUNT = 20;
+const FOREST_MIN_CELLS = 6;
+const FOREST_MAX_CELLS = 36;
+
+const NEIGHBORS_4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const NEIGHBORS_8 = [...NEIGHBORS_4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+/**
+ * Forests of FOREST_MIN_CELLS..FOREST_MAX_CELLS connected cells. Each grows from a seed and prefers
+ * cells already surrounded by trees, so forests are round blobs rather than lines. Forests never
+ * touch each other (otherwise two would merge past the maximum) and avoid walls and water.
+ */
+function generateForests(objects: MapObject[], cols: number, rows: number, cellSize: number): Array<{ x: number; y: number }> {
+  const key = (x: number, y: number) => y * cols + x;
+  const blocked = new Set<number>();
+  for (const obj of objects) {
+    for (let x = obj.x; x < obj.x + obj.width; x += cellSize) {
+      for (let y = obj.y; y < obj.y + obj.height; y += cellSize) {
+        blocked.add(key(Math.floor(x / cellSize), Math.floor(y / cellSize)));
+      }
+    }
+  }
+
+  const forestCells = new Set<number>();
+  // A cell may join a forest if it is free and not next to another forest
+  const canUse = (x: number, y: number, own: Set<number>) => {
+    if (x < 1 || y < 1 || x >= cols - 1 || y >= rows - 1) return false;
+    const k = key(x, y);
+    if (blocked.has(k) || forestCells.has(k) || own.has(k)) return false;
+    return NEIGHBORS_8.every(([dx, dy]) => {
+      const nk = key(x + dx, y + dy);
+      return own.has(nk) || !forestCells.has(nk);
+    });
+  };
+
+  const result: Array<{ x: number; y: number }> = [];
+  let forests = 0;
+  for (let attempt = 0; forests < FOREST_COUNT && attempt < FOREST_COUNT * 20; attempt++) {
+    const target = FOREST_MIN_CELLS + Math.floor(Math.random() * (FOREST_MAX_CELLS - FOREST_MIN_CELLS + 1));
+    const seedX = 1 + Math.floor(Math.random() * (cols - 2));
+    const seedY = 1 + Math.floor(Math.random() * (rows - 2));
+    const own = new Set<number>();
+    if (!canUse(seedX, seedY, own)) continue;
+
+    const cells = [{ x: seedX, y: seedY }];
+    own.add(key(seedX, seedY));
+    while (cells.length < target) {
+      // Candidate cells next to the forest, weighted by how many trees already surround them
+      const candidates: Array<{ x: number; y: number; weight: number }> = [];
+      const seen = new Set<number>();
+      for (const c of cells) {
+        for (const [dx, dy] of NEIGHBORS_4) {
+          const x = c.x + dx, y = c.y + dy, k = key(x, y);
+          if (seen.has(k) || !canUse(x, y, own)) continue;
+          seen.add(k);
+          const around = NEIGHBORS_8.filter(([ax, ay]) => own.has(key(x + ax, y + ay))).length;
+          candidates.push({ x, y, weight: around ** 3 });
+        }
+      }
+      if (candidates.length === 0) break;
+      let pick = Math.random() * candidates.reduce((sum, c) => sum + c.weight, 0);
+      const next = candidates.find(c => (pick -= c.weight) <= 0) ?? candidates[candidates.length - 1];
+      cells.push({ x: next.x, y: next.y });
+      own.add(key(next.x, next.y));
+    }
+
+    if (cells.length < FOREST_MIN_CELLS) continue;
+    own.forEach(k => forestCells.add(k));
+    result.push(...cells);
+    forests++;
+  }
+  return result;
+}
+
 /**
  * Generate a default map layout
  * @param addMapObjects - If false, returns an empty array (clear map). If true, generates all map objects.
@@ -175,62 +249,13 @@ export function generateMapLayout(addMapObjects: boolean = false): MapObject[] {
     }
   });
 
-  // Add trees (scattered) - 7x density (49 trees total)
-  const trees = [
-    // Original trees
-    { x: 500, y: 500 },
-    { x: 1500, y: 700 },
-    { x: 2200, y: 1200 },
-    { x: 1800, y: 2500 },
-    { x: 3200, y: 1800 },
-    { x: 700, y: 3000 },
-    { x: 2800, y: 2800 },
-    // Additional trees for 7x density
-    { x: 300, y: 300 },
-    { x: 900, y: 400 },
-    { x: 1100, y: 900 },
-    { x: 1300, y: 1300 },
-    { x: 1700, y: 500 },
-    { x: 1900, y: 1100 },
-    { x: 2100, y: 1900 },
-    { x: 2300, y: 700 },
-    { x: 2700, y: 1500 },
-    { x: 2900, y: 2300 },
-    { x: 3100, y: 1000 },
-    { x: 3300, y: 2700 },
-    { x: 3500, y: 500 },
-    { x: 3700, y: 1500 },
-    { x: 100, y: 1000 },
-    { x: 500, y: 1500 },
-    { x: 700, y: 2000 },
-    { x: 1100, y: 2500 },
-    { x: 1500, y: 3000 },
-    { x: 1900, y: 3500 },
-    { x: 2300, y: 3100 },
-    { x: 2700, y: 3300 },
-    { x: 3100, y: 3500 },
-    { x: 3500, y: 3100 },
-    { x: 3900, y: 2700 },
-    { x: 200, y: 2000 },
-    { x: 600, y: 2400 },
-    { x: 1000, y: 2200 },
-    { x: 1400, y: 2600 },
-    { x: 1800, y: 2900 },
-    { x: 2200, y: 3400 },
-    { x: 2600, y: 3700 },
-    { x: 3000, y: 3600 },
-    { x: 3400, y: 3300 },
-    { x: 3800, y: 2900 },
-    { x: 400, y: 3600 },
-    { x: 800, y: 3800 },
-  ];
-
-  trees.forEach((pos, index) => {
+  // Add forests: compact clusters of tree cells
+  generateForests(objects, WORLD_WIDTH / CELL_SIZE, WORLD_HEIGHT / CELL_SIZE, CELL_SIZE).forEach((cell, index) => {
     objects.push({
       id: `tree-${index}`,
       type: MapObjectType.TREE,
-      x: pos.x,
-      y: pos.y,
+      x: cell.x * CELL_SIZE,
+      y: cell.y * CELL_SIZE,
       width: CELL_SIZE,
       height: CELL_SIZE,
     });

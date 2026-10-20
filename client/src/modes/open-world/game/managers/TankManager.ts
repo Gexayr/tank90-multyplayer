@@ -108,11 +108,11 @@ export class TankManager {
     }
   }
 
+  /**
+   * Trees are drawn above everything a tank has (sprite, outline, health bar), so a tank in a forest
+   * is fully hidden. The health bar sticks out below the tank, so hide it under trees as well.
+   */
   updateTankAlpha(tank: Tank, underTree: boolean) {
-    const alpha = underTree ? 0.5 : 1.0;
-    tank.sprite.alpha = alpha;
-    if (tank.highlight) {
-        tank.highlight.alpha = alpha;
-    }
+    tank.healthBar.visible = !underTree;
   }
 }

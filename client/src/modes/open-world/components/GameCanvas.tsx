@@ -20,6 +20,10 @@ const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 720;
 const WORLD_WIDTH = 4000;
 const WORLD_HEIGHT = 4000;
+const CELL_SIZE = 40;
+// Ground colors as rendered on the Missions board
+const GROUND_LIGHT = '#0c2a07';
+const GROUND_DARK = '#072906';
 // Below 1 shows more of the battlefield around the tank
 const CAMERA_ZOOM = 0.8;
 // Touch screens play full screen; zoom out so the short side shows at least this many world units
@@ -115,6 +119,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ playerName }) => {
     // Draw players
     const localId = wsService.getSocketId();
     tankManager.getTanks().forEach((t) => {
+      // Tanks hidden in a forest stay hidden on the minimap too
+      if (t.id !== localId && mapManager.isUnderTree(t.sprite.x, t.sprite.y)) return;
       const x = t.sprite.x * MINIMAP_SCALE_X;
       const y = t.sprite.y * MINIMAP_SCALE_Y;
       ctx.save();
@@ -130,7 +136,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ playerName }) => {
     // Draw map objects
     mapManager.getMapObjects().forEach((sprite, objId) => {
       if (!sprite.visible) return;
-      ctx.fillStyle = objId.startsWith('brick') ? 'rgba(139, 69, 19, 0.6)' :
+      ctx.fillStyle = objId.startsWith('brick') ? 'rgba(158, 66, 29, 0.8)' :
                       objId.startsWith('concrete') ? 'rgba(128, 128, 128, 0.6)' :
                       objId.startsWith('water') ? 'rgba(65, 105, 225, 0.5)' :
                       objId.startsWith('tree') ? 'rgba(34, 139, 34, 0.5)' : 'rgba(255, 255, 255, 0.3)';
@@ -171,7 +177,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ playerName }) => {
     const cam = new Camera({ viewportWidth: view.width, viewportHeight: view.height, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT, zoom: view.zoom });
     setCamera(cam);
 
-    const app = new PIXI.Application({ width: view.width, height: view.height, backgroundColor: 0x2a2a2a, resolution: window.devicePixelRatio || 1, autoDensity: true });
+    const app = new PIXI.Application({ width: view.width, height: view.height, backgroundColor: 0x0b0d12, resolution: window.devicePixelRatio || 1, autoDensity: true });
     app.stage.sortableChildren = true;
     canvasRef.current.appendChild(app.view as HTMLCanvasElement);
     setPixiApp(app);
@@ -182,12 +188,18 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ playerName }) => {
     app.stage.addChild(world);
     setWorldContainer(world);
 
-    const grid = new PIXI.Graphics();
-    grid.lineStyle(1, 0x555555, 0.4);
-    for (let x = 0; x <= WORLD_WIDTH; x += 40) { grid.moveTo(x + 0.5, 0); grid.lineTo(x + 0.5, WORLD_HEIGHT); }
-    for (let y = 0; y <= WORLD_HEIGHT; y += 40) { grid.moveTo(0, y + 0.5); grid.lineTo(WORLD_WIDTH, y + 0.5); }
-    grid.zIndex = -10;
-    world.addChild(grid);
+    // Same green checkerboard as the Missions board, one 40-unit cell per tile
+    const groundCanvas = document.createElement('canvas');
+    groundCanvas.width = groundCanvas.height = CELL_SIZE * 2;
+    const groundCtx = groundCanvas.getContext('2d')!;
+    groundCtx.fillStyle = GROUND_DARK;
+    groundCtx.fillRect(0, 0, CELL_SIZE * 2, CELL_SIZE * 2);
+    groundCtx.fillStyle = GROUND_LIGHT;
+    groundCtx.fillRect(0, 0, CELL_SIZE, CELL_SIZE);
+    groundCtx.fillRect(CELL_SIZE, CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    const ground = new PIXI.TilingSprite(PIXI.Texture.from(groundCanvas), WORLD_WIDTH, WORLD_HEIGHT);
+    ground.zIndex = -10;
+    world.addChild(ground);
 
     setTankManager(new TankManager(world));
     setBulletManager(new BulletManager(world));

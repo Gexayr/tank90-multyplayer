@@ -1,8 +1,18 @@
 import * as PIXI from 'pixi.js';
 
+// Brick colors as rendered on the Missions board
+const BRICK_TOP = 0x9e421d;
+const BRICK_FRONT = 0x5f200c;
+
+// Map objects sit on a 40-unit grid
+const TREE_CELL = 40;
+const cellKey = (x: number, y: number) => `${Math.floor(x / TREE_CELL)},${Math.floor(y / TREE_CELL)}`;
+
 export class MapManager {
   private mapObjects: Map<string, PIXI.Graphics>;
   private world: PIXI.Container;
+  // World cells covered by trees, for O(1) "is this tank hidden" checks
+  private treeCells = new Set<string>();
 
   constructor(world: PIXI.Container) {
     this.mapObjects = new Map();
@@ -26,15 +36,13 @@ export class MapManager {
     switch (obj.type) {
       case 'brick_wall':
         if (!obj.destroyed) {
-          sprite.beginFill(0x8B4513);
-          sprite.drawRect(0, 0, obj.width, obj.height);
+          // Looks like a Missions brick block: lit top face, dark front face, small gap around
+          sprite.beginFill(BRICK_TOP);
+          sprite.drawRect(1, 1, obj.width - 2, obj.height - 7);
           sprite.endFill();
-          sprite.lineStyle(1, 0x654321, 0.5);
-          sprite.moveTo(obj.width / 2, 0);
-          sprite.lineTo(obj.width / 2, obj.height);
-          sprite.moveTo(0, obj.height / 2);
-          sprite.lineTo(obj.width, obj.height / 2);
-          sprite.lineStyle(0);
+          sprite.beginFill(BRICK_FRONT);
+          sprite.drawRect(1, obj.height - 6, obj.width - 2, 5);
+          sprite.endFill();
         }
         break;
 
@@ -66,15 +74,29 @@ export class MapManager {
         sprite.lineStyle(0);
         break;
 
-      case 'tree':
-        sprite.beginFill(0x228B22);
-        sprite.drawCircle(obj.width / 2, obj.height / 2, obj.width / 2 - 2);
+      case 'tree': {
+        // Dense crown filling the whole cell, so neighbouring cells merge into one forest
+        const w = obj.width, h = obj.height;
+        sprite.beginFill(0x1a5c1a);
+        sprite.drawRect(0, 0, w, h);
         sprite.endFill();
-        sprite.beginFill(0x8B4513);
-        sprite.drawRect(obj.width / 2 - 4, obj.height / 2, 8, obj.height / 2);
+        sprite.beginFill(0x267a26);
+        for (const [cx, cy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75], [0.5, 0.5]]) {
+          sprite.drawCircle(cx * w, cy * h, w * 0.27);
+        }
         sprite.endFill();
-        sprite.zIndex = 0.5;
+        sprite.beginFill(0x3c9c3c);
+        for (const [cx, cy] of [[0.18, 0.18], [0.68, 0.18], [0.18, 0.68], [0.68, 0.68]]) {
+          sprite.drawCircle(cx * w, cy * h, w * 0.1);
+        }
+        sprite.endFill();
+        // Above tanks and bullets: whatever drives into the forest is hidden
+        sprite.zIndex = 10;
+        for (let x = obj.x; x < obj.x + w; x += TREE_CELL) {
+          for (let y = obj.y; y < obj.y + h; y += TREE_CELL) this.treeCells.add(cellKey(x, y));
+        }
         break;
+      }
     }
 
     if (obj.type === 'brick_wall' && obj.destroyed) {
@@ -94,17 +116,8 @@ export class MapManager {
     }
   }
 
+  /** World coordinates (not screen bounds, which change with the camera) */
   isUnderTree(x: number, y: number): boolean {
-    let underTree = false;
-    this.mapObjects.forEach((treeSprite, objId) => {
-      if (objId.startsWith('tree') && treeSprite.visible) {
-        const treeBounds = treeSprite.getBounds();
-        if (x >= treeBounds.x && x < treeBounds.x + treeBounds.width &&
-            y >= treeBounds.y && y < treeBounds.y + treeBounds.height) {
-          underTree = true;
-        }
-      }
-    });
-    return underTree;
+    return this.treeCells.has(cellKey(x, y));
   }
 }

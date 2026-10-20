@@ -120,7 +120,7 @@ const Home = () => {
             <ul className="text-sm text-gray-300 space-y-1 mb-5 flex-1">
               <li>▸ Solo or up to 4 friends in a room</li>
               <li>▸ Stop 20 enemy tanks before they hit your base</li>
-              <li>▸ Power-ups: ⭐ bullets, 🛡 shield, ⚡ speed, ❤ life</li>
+              <li>▸ Bonuses: ⭐ faster bullets, 🛡 blocks a hit, ⚡ faster tank, ❤ +1 life</li>
               <li>▸ 3D battlefield</li>
             </ul>
             <div className="text-xs text-gray-400 mb-3">
