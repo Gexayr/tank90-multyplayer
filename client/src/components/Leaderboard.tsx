@@ -1,84 +1,76 @@
-import React, { useEffect, useState } from 'react';
-import './Leaderboard.css';
+import { useEffect, useState } from 'react';
+import { fetchLeaderboard, GameMode, ScoreRow } from '../lib/api';
 
-interface Score {
-  playerId: string;
-  score: number;
+const TABS: { mode: GameMode; label: string }[] = [
+  { mode: 'open-world', label: 'Open World' },
+  { mode: 'missions', label: 'Missions' },
+];
+
+interface LeaderboardProps {
+  /** Show only one mode (in-game sidebar); without it the tabs are shown */
+  mode?: GameMode;
+  className?: string;
 }
 
-const Leaderboard: React.FC = () => {
-  const [scores, setScores] = useState<Score[]>([]);
+const Leaderboard = ({ mode, className = '' }: LeaderboardProps) => {
+  const [tab, setTab] = useState<GameMode>(mode ?? 'open-world');
+  const [scores, setScores] = useState<ScoreRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const activeMode = mode ?? tab;
 
   useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
-      // Auto-expand on desktop
-      if (window.innerWidth > 768) {
-        setIsExpanded(true);
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  useEffect(() => {
-    const fetchLeaderboard = async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        const response = await fetch('http://localhost:3000/leaderboard');
-        if (!response.ok) {
-          throw new Error('Failed to fetch leaderboard');
+        const data = await fetchLeaderboard(activeMode);
+        if (!cancelled) {
+          setScores(data);
+          setError(null);
         }
-        const data = await response.json();
-        setScores(data);
-      } catch (err) {
-        if (err instanceof Error) {
-            setError(err.message);
-        } else {
-            setError('An unknown error occurred');
-        }
+      } catch {
+        if (!cancelled) setError('Leaderboard unavailable');
       }
     };
-
-    fetchLeaderboard();
-    // Fetch every 10 seconds
-    const interval = setInterval(fetchLeaderboard, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    load();
+    const interval = setInterval(load, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [activeMode]);
 
   return (
-    <div className="leaderboard-container">
-      <div className="leaderboard-header">
-        <h2>Leaderboard</h2>
-        <button 
-          className="leaderboard-toggle mobile-only"
-          onClick={() => setIsExpanded(!isExpanded)}
-          aria-label={isExpanded ? 'Collapse leaderboard' : 'Expand leaderboard'}
-        >
-          {isExpanded ? '−' : '+'}
-        </button>
-      </div>
-      {(isExpanded || !isMobile) && (
-        <div className="leaderboard-content">
-          {error && <p className="leaderboard-error">{error}</p>}
-          {scores.length === 0 && !error && (
-            <p className="leaderboard-empty">No scores yet</p>
-          )}
-          <ol className="leaderboard-list">
-            {scores.map((score, index) => (
-              <li key={index} className="leaderboard-item">
-                <span className="leaderboard-rank">{index + 1}.</span>
-                <span className="leaderboard-player">{score.playerId}</span>
-                <span className="leaderboard-score">{score.score}</span>
-              </li>
-            ))}
-          </ol>
+    <section className={`bg-panel border-2 border-line p-4 ${className}`}>
+      <h2 className="font-pixel text-xs text-gold mb-3">LEADERBOARD</h2>
+      {!mode && (
+        <div className="flex mb-3 border-2 border-line" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.mode}
+              role="tab"
+              aria-selected={tab === t.mode}
+              onClick={() => setTab(t.mode)}
+              className={`flex-1 py-2 text-xs font-semibold transition-colors ${
+                tab === t.mode ? 'bg-gold text-ink' : 'bg-panel-2 text-gray-300 hover:text-white'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       )}
-    </div>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {!error && scores.length === 0 && <p className="text-sm text-gray-400">No scores yet. Be the first!</p>}
+      <ol className="space-y-1">
+        {scores.map((row, index) => (
+          <li key={row.name} className="flex items-center gap-3 text-sm bg-panel-2 px-3 py-2">
+            <span className={`font-pixel text-[10px] w-6 ${index < 3 ? 'text-gold' : 'text-gray-500'}`}>{index + 1}</span>
+            <span className="flex-1 truncate">{row.name}</span>
+            <span className="font-mono text-gold">{row.score}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 };
 

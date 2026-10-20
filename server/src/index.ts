@@ -1,126 +1,98 @@
 import express from 'express';
 import { createServer } from 'http';
+import fs from 'fs';
+import path from 'path';
 import { Server } from 'socket.io';
-import mongoose from 'mongoose';
-import cors from 'cors';
-import Score from './models/Score';
 import dotenv from 'dotenv';
-import { Game } from './game/Game';
+import { setupOpenWorld } from './open-world/socket';
+import { setupMissions, missionStats } from './missions/room';
+import { GAME_MODES, GameMode, topScores, closeDb } from './db';
+import { attachConnectionGuards } from './security';
 
 dotenv.config();
 
-const app = express();
+const PORT = Number(process.env.PORT || 3090);
+const HOST = process.env.HOST || '0.0.0.0';
+const STATIC_DIR = path.resolve(process.env.STATIC_DIR || '../client/dist');
+const MAX_CONNECTIONS_PER_IP = Number(process.env.MAX_CONNECTIONS_PER_IP || 8);
 
-// Build allowed origins list from env (comma-separated) or allow any origin by default
-const allowedOriginsEnv = process.env.FRONT_URI;
-const allowedOrigins = allowedOriginsEnv
-  ? allowedOriginsEnv.split(',').map((s) => s.trim())
-  : true; // reflect request origin
+const app = express();
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 'loopback, uniquelocal');
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: {
-<<<<<<< HEAD
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-  },
-=======
-    origin: process.env.FRONT_URI || "http://localhost:5173",
-    methods: ["GET", "POST"]
-  },
   transports: ['websocket'],
-  pingInterval: 2000,
-  pingTimeout: 5000
->>>>>>> 1f52e872a47a6c8586bf5b6ee822e5d8353abaf9
+  pingInterval: 10000,
+  pingTimeout: 10000,
+  maxHttpBufferSize: 4096,
+  serveClient: false,
+});
+io.engine.opts.allowRequest = attachConnectionGuards(io, MAX_CONNECTIONS_PER_IP);
+
+const openWorld = setupOpenWorld(io.of('/open-world'));
+setupMissions(io.of('/missions'));
+
+app.get('/healthz', (_req, res) => {
+  res.json({ status: 'ok' });
 });
 
-// Apply CORS to HTTP routes as well
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
-app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:27017/tank90';
-
-// Connect to MongoDB
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-// Basic route
-app.get('/', (req, res) => {
-  res.json({ message: 'Tank 90 Backend API' });
-});
-
-// Leaderboard route
-app.get('/leaderboard', async (req, res) => {
+app.get('/api/leaderboard', (req, res) => {
+  const mode = (GAME_MODES as string[]).includes(String(req.query.mode))
+    ? (req.query.mode as GameMode)
+    : 'open-world';
   try {
-    const scores = await Score.find().sort({ score: -1 }).limit(10);
-    res.json(scores);
+    res.json(topScores(mode));
   } catch (error) {
+    console.error('Error fetching leaderboard:', error);
     res.status(500).json({ message: 'Error fetching leaderboard' });
   }
 });
 
-const game = new Game();
+app.get('/api/stats', (_req, res) => {
+  res.json({ openWorldPlayers: openWorld.playerCount(), missions: missionStats() });
+});
 
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+app.use('/api', (_req, res) => {
+  res.status(404).json({ message: 'Not found' });
+});
 
-  const player = game.addPlayer(socket.id);
-
-  // Send current game state to the new player (includes map objects)
-  socket.emit('game-state', game.getGameState());
-  
-  // Also send map objects separately for initial load
-  socket.emit('map-objects', game.getMapObjects());
-
-  // Notify other players about the new player
-  socket.broadcast.emit('player-join', player);
-
-  // Handle player input
-  socket.on('player-input', (input: any) => {
-    game.handleInput(socket.id, input);
+// Built client (production). Only files from the Vite build are served.
+if (fs.existsSync(STATIC_DIR)) {
+  app.use(express.static(STATIC_DIR, {
+    dotfiles: 'ignore',
+    index: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }));
+  const indexHtml = path.join(STATIC_DIR, 'index.html');
+  // Client-side routes (/, /open-world, /missions/<code>) all get index.html
+  app.get('*', (req, res, next) => {
+    // Files (anything with an extension) and dotfiles are never answered with index.html
+    if (path.extname(req.path) || req.path.split('/').some((part) => part.startsWith('.'))) return next();
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(indexHtml);
   });
+}
 
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-    game.removePlayer(socket.id);
-    io.emit('player-leave', socket.id);
+app.use((_req, res) => {
+  res.status(404).send('Not found');
+});
+
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
+});
+
+function shutdown() {
+  io.close();
+  httpServer.close(() => {
+    closeDb();
+    process.exit(0);
   });
-});
-
-// Broadcast snapshots to all players
-game.on('tick', (snapshot) => {
-  io.emit('s', snapshot);
-});
-
-// Game event handling
-game.on('health-update', (data) => {
-  io.emit('health-update', data);
-});
-
-game.on('score-update', (data) => {
-  io.emit('score-update', data);
-});
-
-game.on('player-removed', (playerId) => {
-  io.emit('player-leave', playerId);
-});
-
-<<<<<<< HEAD
-=======
-game.on('map-update', (data) => {
-  io.emit('map-update', data);
-});
-
->>>>>>> 1f52e872a47a6c8586bf5b6ee822e5d8353abaf9
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

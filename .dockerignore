@@ -1,0 +1,19 @@
+# Never send secrets, VCS data or local builds into the build context
+.env
+.env.*
+**/.env
+**/.env.*
+.git
+.gitignore
+.idea
+.vscode
+**/node_modules
+**/dist
+data
+**/*.log
+docker-compose*.yml
+Dockerfile
+.dockerignore
+README.md
+scripts
+deploy

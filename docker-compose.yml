@@ -1,41 +1,43 @@
-version: '3.8'
-
+# Production: one container (game server + built client) behind host nginx.
+# Run ./scripts/compute-mem-limit.sh first: it writes TANK_MEM_LIMIT / TANK_HEAP_MB to .env.
 services:
-  frontend:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
+  tank90:
+    build: .
+    image: tank90:latest
+    container_name: tank90
+    restart: unless-stopped
     ports:
-      - "5173:5173"
-    volumes:
-      - ./client:/app
-      - /app/node_modules
+      # Loopback only: reachable through nginx, never directly from the internet
+      - "127.0.0.1:3090:3090"
     environment:
-      - NODE_ENV=development
-    depends_on:
-      - backend
-
-  backend:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
+      NODE_ENV: production
+      TRUST_PROXY: "1"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://tank.amsoft.am}
+      ADD_MAP_OBJECTS: ${ADD_MAP_OBJECTS:-true}
+      OPEN_WORLD_MAX_PLAYERS: ${OPEN_WORLD_MAX_PLAYERS:-64}
+      MAX_ROOMS: ${MAX_ROOMS:-30}
+      MAX_CONNECTIONS_PER_IP: ${MAX_CONNECTIONS_PER_IP:-8}
+      NODE_OPTIONS: --max-old-space-size=${TANK_HEAP_MB:-384}
     volumes:
-      - ./server:/app
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-      - MONGO_URI=mongodb://mongo:27017/tank90
-    depends_on:
-      - mongo
-
-  mongo:
-    image: mongo:latest
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
+      - tank90_data:/data
+    # Hard memory ceiling; memswap = mem so the container can't push the host into swap
+    mem_limit: ${TANK_MEM_LIMIT:-640m}
+    memswap_limit: ${TANK_MEM_LIMIT:-640m}
+    mem_reservation: 128m
+    cpus: 2
+    pids_limit: 200
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
-  mongodb_data:
+  tank90_data:

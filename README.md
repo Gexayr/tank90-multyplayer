@@ -1,203 +1,109 @@
-# 🛡️ Tank 90 Multiplayer – Project Documentation
+# 🛡️ Tank 90 Multiplayer
 
-## 📌 Overview
+Browser remake of Tank 1990 / Battle City with two modes, picked on the home page:
 
-**Tank 90 Multiplayer** is a modern web-based remake of the classic Tank 1990 game. It supports real-time multiplayer gameplay in a browser. The game is developed using **TypeScript** for both frontend and backend and is containerized using **Docker Compose** for ease of deployment and development.
+- **Open World** – free-for-all on a 4000×4000 map (2D, PixiJS). Respawn after 3 s, +100 per kill, minimap, trees/water/bricks/steel.
+- **Missions** – co-op, solo or up to 4 friends per room (3D, React Three Fiber). Defend the eagle from 20 enemy tanks, power-ups, 3 lives. Invite friends with a link: `/missions/<CODE>`.
 
----
+Production: https://tank.amsoft.am
 
-## 🚀 Tech Stack
+## Stack
 
-### Frontend
-- **TypeScript**
-- **React** or **PixiJS** (for rendering the 2D game canvas)
-- **Socket.IO** (for real-time multiplayer sync)
-- **HTML/CSS**
+| Part   | Tech |
+|--------|------|
+| Client | React 19, Vite 6, Tailwind 4, PixiJS 7 (open world), three.js + R3F 9 (missions) |
+| Server | Node 24, Express 4, Socket.IO 4, SQLite (`node:sqlite`) for the leaderboard |
+| Deploy | One Docker container behind host nginx |
 
-### Backend
-- **Node.js** (TypeScript)
-- **Express.js**
-- **Socket.IO Server**
-- **MongoDB** (for storing leaderboard and player stats)
-
-### Infrastructure
-- **Docker**
-- **Docker Compose**
-- **Nginx** (optional, for production reverse proxy)
-- **.env** for configuration
-
----
-
-## 🧩 Project Structure
-
-
-## 🧩 Project Structure
 ```
-tank90/
-├── client/ # Frontend code
-│ ├── public/
-│ ├── src/
-│ │ ├── assets/
-│ │ ├── components/
-│ │ ├── game/ # Game engine and canvas logic
-│ │ ├── utils/
-│ │ └── main.tsx
-│ └── package.json
-│
-├── server/ # Backend code
-│ ├── src/
-│ │ ├── controllers/
-│ │ ├── services/
-│ │ ├── sockets/
-│ │ └── index.ts
-│ └── package.json
-│
-├── docker-compose.yml
-├── Dockerfile.client
-├── Dockerfile.server
-├── .env
-└── README.md
+client/                 Frontend
+  src/pages/Home.tsx      Mode selection, nickname, leaderboard
+  src/modes/open-world/   2D mode (prediction, interpolation, Pixi managers)
+  src/modes/missions/     3D mode (scene, meshes, HUD, mobile controls)
+server/                 Backend
+  src/index.ts            HTTP + Socket.IO wiring, API, static files
+  src/open-world/         Authoritative 25 Hz simulation (namespace /open-world)
+  src/missions/           Rooms, enemy AI, 20 Hz simulation (namespace /missions)
+  src/security.ts         Name/room sanitising, rate limits, origin + per-IP guards
+  src/db.ts               SQLite leaderboard
+shared/missions-types.ts  Types used by both server and client
+scripts/compute-mem-limit.sh
 ```
 
----
+## Development
 
----
-
-## 🎮 Game Features
-
-- Multiplayer mode (2+ players)
-- Destructible and indestructible walls
-- Power-ups (star, shield, speed boost, etc.)
-- Player stats and leaderboard
-- Level progression
-
----
-
-## 🧱 Game Mechanics
-
-### Controls
-
-| Player | Movement           | Fire        |
-|--------|--------------------|-------------|
-| P1     | Arrow keys         | Spacebar    |
-| P2     | W A S D            | F           |
-
-### Objects
-
-- 🟥 Red Tanks – Enemies
-- 🟦 Blue Tank – Player 2
-- 🟨 Yellow Tank – Player 1
-- 🧱 Brick Wall – Destructible
-- 🧱 Metal Wall – Indestructible
-- ⭐ Star – Power-up
-- ⚡ Bolt – Speed boost
-
----
-
-## ⚙️ Setup & Deployment
-
-### Prerequisites
-
-- Docker & Docker Compose installed
-
-### 1. Clone the repo
 ```bash
-git clone https://github.com/gexayr/tank90.git
-cd tank90
+cd server && npm install && npm run dev     # http://localhost:3090
+cd client && npm install && npm run dev     # http://localhost:5173 (proxies /api and /socket.io to 3090)
 ```
 
+The local database is created at `server/data/tank90.sqlite`.
 
-### 2. Create .env file
-```aiexclude
-PORT=3000
-MONGO_URI=mongodb://mongo:27017/tank90
-```
+## Production
 
-### 3. Build & Run
-```aiexclude
-docker-compose up --build
-```
-
-This starts:
-- Frontend at `http://localhost:5173`
-- Backend at `http://localhost:3000`
-- MongoDB at port `27017`
-
----
-
-## 🧪 Development
-
-### Frontend
 ```bash
-cd client
-npm install
-npm run dev
+./scripts/compute-mem-limit.sh       # writes TANK_MEM_LIMIT / TANK_HEAP_MB into .env
+docker-compose up -d --build
 ```
 
-### Backend
+- The image builds the client and server in separate stages; the runtime image only contains compiled JS, production `node_modules` and the static client. It runs as user `node` with a read-only filesystem, no capabilities, `no-new-privileges`.
+- Port `127.0.0.1:3090` only – reachable through nginx, not from the internet.
+- Leaderboard data lives in the `tank90_data` volume (`/data/tank90.sqlite`).
+- Building the image takes ~0.5–1 GB of RAM for a minute; run it when the server isn't under load.
 
-```aiexclude
-cd server
-npm install
-npm run dev
-```
+### Memory and CPU limits
 
-## 🛠️ Backend API
+`compute-mem-limit.sh` sets the container ceiling to **80% of MemAvailable** at the time it runs (pass another percentage as the first argument). `memswap_limit` equals the limit, so the container can't push the host into swap, and Node's heap is capped at ~60% of it. CPU is limited to 2 cores, processes to 200.
 
-### REST Endpoints
+Measured: ~25 MB idle, ~65 MB with 64 open-world players and 30 full mission rooms (184 sockets).
 
-| Method | Endpoint          | Description           |
-|--------|-------------------|-----------------------|
-| GET    | /leaderboard      | Get top scores        |
-| POST   | /player/register  | Register a new player |
-| POST   | /score/update     | Update player score   |
+Application limits (env, see `.env.example`): 64 players in open world, 30 mission rooms × 4 players, 8 connections per IP, ~60 inputs/s per socket, 4 KB max message.
 
-### WebSocket Events
+### nginx
 
-| Event           | Direction       | Description                       |
-|----------------|------------------|-----------------------------------|
-| `player-join`  | Client → Server | Player joins game                |
-| `state-update` | Server → Client | Broadcast game state             |
-| `player-move`  | Client → Server | Player movement input            |
-| `fire`         | Client → Server | Player fires a shot              |
-| `game-over`    | Server → Client | Game ends                        |
+- `/etc/nginx/conf.d/tank90-limits.conf` – per-IP rate/connection zones
+- `/etc/nginx/snippets/tank90-security-headers.conf` – HSTS, CSP, X-Frame-Options, nosniff, Referrer/Permissions-Policy
+- `/etc/nginx/sites-available/tank90.conf` – `tank.amsoft.am` → `127.0.0.1:3090`; blocks dotfiles, configs, sources, databases, source maps; only GET/HEAD/POST
+- `/etc/nginx/sites-available/tank90-back.conf` – old `tank-back.amsoft.am` → 301 to `tank.amsoft.am`
 
----
+After editing: `nginx -t && systemctl reload nginx`.
 
-## 🧾 License
+## API
 
-MIT License
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/leaderboard?mode=open-world\|missions` | Top 10 nicknames by lifetime score |
+| GET | `/api/stats` | Players online in open world, active mission rooms |
+| GET | `/healthz` | Health check |
 
----
+## Socket.IO
 
-## 📞 Contact
+Connect with `transports: ['websocket']`.
 
-For collaboration or issues, reach out to the development team at [your-email@example.com].
+**`/open-world`** (`auth: { name }`)
 
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `player-input` | C → S | `{ up, down, left, right, shoot, sequenceId }` ~20/s |
+| `game-state`, `map-objects` | S → C | Full state on connect |
+| `s` | S → C | Snapshot every tick `{ t, p: [{id,x,y,r,h,s,sid}], b: [...] }` |
+| `player-join` / `player-leave` | S → C | Player connected / left or was destroyed |
+| `player-died` | S → C | `{ id, killerName, respawnIn }` |
+| `map-update` | S → C | `{ objectId, destroyed }` |
+| `server-full` | S → C | Open world is at capacity |
 
-## Notes on WebSocket connectivity behind reverse proxies
+**`/missions`**
 
-If you see errors like `Connection error: websocket error` or browser logs showing that a WebSocket connection to `/socket.io/?EIO=4&transport=websocket` failed, your reverse proxy (e.g., NGINX) might not be configured to pass WebSocket upgrade headers.
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `join-room` | C → S | `{ roomId, name }` (room code 3–12 chars A–Z/0–9) |
+| `joined` / `join-error` | S → C | `{ socketId, roomId }` / `{ reason: invalid-room \| room-full \| server-full }` |
+| `start-game`, `restart-game`, `leave-room` | C → S | – |
+| `player-input` | C → S | `{ up, down, left, right, fire }` on change |
+| `mission-init` | S → C | `{ walls }` on join / restart |
+| `walls-removed` | S → C | Wall ids destroyed this tick |
+| `game-state` | S → C | State without walls, 20 Hz |
 
-This project configures the client to prefer HTTP long-polling first and then upgrade to WebSocket when the environment allows it. This ensures the app still works in environments where WebSocket upgrades are blocked.
+## License
 
-To enable WebSocket upgrades through NGINX, ensure your site config includes:
-
-```
-location /socket.io/ {
-  proxy_pass http://server:3000; # adjust upstream
-  proxy_http_version 1.1;
-  proxy_set_header Upgrade $http_upgrade;
-  proxy_set_header Connection "upgrade";
-  proxy_set_header Host $host;
-  proxy_read_timeout 600s;
-}
-```
-
-Environment configuration:
-- FRONT_URI should list allowed front-end origins (comma-separated). Example:
-  `FRONT_URI=https://tank.amsoft.am,http://localhost:5173`
-- VITE_SERVER_URL should point to your backend base URL that serves Socket.IO. Example:
-  `VITE_SERVER_URL=https://tank-back.amsoft.am`
-
-With these settings, polling will connect even if WebSockets are blocked, and will upgrade to WebSockets automatically when the proxy is correctly configured.
+MIT

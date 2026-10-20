@@ -1,0 +1,151 @@
+/* GameCanvas.css - Responsive game canvas styling */
+
+/* Desktop: the 1280x720 canvas scales down to fit the page width */
+.game-canvas-wrapper {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background-color: #000;
+}
+
+.game-canvas-container {
+  width: 100%;
+  max-width: 1280px;
+  aspect-ratio: 16 / 9;
+  margin: 0 auto;
+  border: 2px solid #333;
+  box-sizing: border-box;
+}
+
+.game-canvas-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Touch screens: the game fills the whole screen above the page */
+.game-canvas-wrapper.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  touch-action: none;
+}
+
+.game-canvas-wrapper.fullscreen .game-canvas-container {
+  max-width: none;
+  height: 100%;
+  aspect-ratio: auto;
+  border: 0;
+}
+
+@media (max-width: 768px) {
+  .game-minimap {
+    width: 110px !important;
+    height: 110px !important;
+  }
+}
+
+/* Mobile controls (same look as Missions): joystick bottom-left, fire button bottom-right */
+.mobile-joystick {
+  position: fixed;
+  left: 28px;
+  bottom: 28px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 1001;
+}
+
+.mobile-joystick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(255, 215, 0, 0.75);
+  border: 2px solid rgba(255, 215, 0, 0.9);
+  pointer-events: none;
+}
+
+.mobile-fire-button {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  background: rgba(220, 38, 38, 0.6);
+  border: 3px solid rgba(255, 80, 80, 0.8);
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  z-index: 1001;
+}
+
+.mobile-fire-button.pressed {
+  background: rgba(220, 38, 38, 0.9);
+}
+
+/* HUD and death overlay */
+.game-hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  font-size: 14px;
+  color: #fff;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.game-menu-btn {
+  pointer-events: auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
+}
+
+.death-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.death-title {
+  font-size: 32px;
+  font-weight: bold;
+  color: #ff5555;
+}
+
+.death-timer {
+  font-size: 18px;
+}
